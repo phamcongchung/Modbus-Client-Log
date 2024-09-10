@@ -1,0 +1,8 @@
+1. Tạo hàm template<typename T> để truyền nhiều kiểu dữ liệu vào cùng 1 hàm:
+- Tạo file .tpp, include file header và viết hàm template vào file
+- Include file .tpp trong file header
+- Lưu file .tpp trong đường dẫn thư viện chứa file header
+2. Truyền biến string vào trong 1 hàm print:
+printString(const char* message){
+   Serial.print(message);
+}
