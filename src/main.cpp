@@ -24,21 +24,17 @@ using namespace std;
 #include <TinyGsmClient.h>
 
 // SoftwareSerial gpsSerial(GPS_RXD, GPS_TXD);
-HardwareSerial SerialAT(2);
+HardwareSerial SerialAT(1);
 // TinyGPSPlus gps;
 TinyGsm modem(SerialAT);
 TinyGsmClient client(modem);
 PubSubClient mqtt(client);
-RtcDS3231 <TwoWire> Rtc(Wire);  
+RtcDS3231<TwoWire> Rtc(Wire);  
 RtcDateTime now = Rtc.GetDateTime();
 RtcDateTime compiled; // Time at which the program is compiled
 
-float volume;
-float ullage;
-String speed;
-String latitude;
-String altitude;
-String longitude;
+float volume, ullage;
+String latitude, longitude, altitude, speed;
 char logString[100];
 char monitorString[150];
 // GPRSS credentials
@@ -66,12 +62,12 @@ String getValue(String data, char separator, int index);
 void setup() {
   // Initialize serial communication
   Serial.begin(115200);
-  SerialAT.begin(115200);
+  SerialAT.begin(115200, SERIAL_8N1, 32, 33);
   delay(3000);
 
   Serial.println("Initializing modem...");
   modem.restart();
-
+  
   Serial.print("Connecting to APN: ");
   Serial.println(apn);
   if (!modem.gprsConnect(apn, gprsUser, gprsPass)) {
@@ -79,7 +75,7 @@ void setup() {
     ESP.restart();
   }
   else {
-      Serial.println("OK");
+    Serial.println("OK");
   }
 
   if (modem.isGprsConnected()) {
@@ -90,7 +86,7 @@ void setup() {
   modem.sendAT("+CGPS=1,1");  // Start GPS in standalone mode
   modem.waitResponse(10000L);
   Serial.println("Waiting for GPS data...");
-
+  
   // Print out compile time
   Serial.print("Compiled: ");
   Serial.print(__DATE__);
@@ -111,7 +107,7 @@ void setup() {
     while (1);
   }
   delay(500);
-
+  
   // Initialize DS3231 communication
   Rtc.Begin();
   compiled = RtcDateTime(__DATE__, __TIME__);
@@ -193,7 +189,11 @@ void loop() {
       if (gps.location.isUpdated())
         gpsUpdate();
   */
-
+  if(!mqtt.connected()){
+    mqttReconnect();
+  }
+  mqtt.loop();
+  
   modem.sendAT("+CGPSINFO");
   if (modem.waitResponse(10000L, "+CGPSINFO:") == 1) {
     String gpsData = modem.stream.readStringUntil('\n');
@@ -210,7 +210,7 @@ void loop() {
   } else {
     Serial.println("GPS data not available or invalid.");
   }
-
+  
   // Validate RTC date and time
   if (!Rtc.IsDateTimeValid())
   {
@@ -225,6 +225,7 @@ void loop() {
       Rtc.SetDateTime(compiled);
     }
   }
+  RtcDateTime now = Rtc.GetDateTime();
   // Ensure the RTC is running
   if (!Rtc.GetIsRunning())
   {
@@ -263,11 +264,6 @@ void loop() {
     Serial.println(ullage);
   }
 
-  if(!mqtt.connected()){
-    mqttReconnect();
-  }
-  mqtt.loop();
-
   logger(now);
   delay(5000);
 }
@@ -301,11 +297,10 @@ void gpsUpdate()
 
 void parseGPS(String gpsData){
   // Split the string by commas
-  int index = 0;
-  latitude = getValue(gpsData, ',', index++) + getValue(gpsData, ',', index++);
-  longitude = getValue(gpsData, ',', index++) + getValue(gpsData, ',', index++);
-  altitude = getValue(gpsData, ',', index+3);
-  speed = getValue(gpsData, ',', index++);
+  latitude = getValue(gpsData, ',', 0) + getValue(gpsData, ',', 1);
+  longitude = getValue(gpsData, ',', 2) + getValue(gpsData, ',', 3);
+  altitude = getValue(gpsData, ',', 6);
+  speed = getValue(gpsData, ',', 7);
 }
 
 String getValue(String data, char separator, int index) {
@@ -321,7 +316,6 @@ String getValue(String data, char separator, int index) {
       strIndex[1] = (i == maxIndex) ? i+1 : i;
     }
   }
-
   return found > index ? data.substring(strIndex[0], strIndex[1]) : "";
 }
 
@@ -340,11 +334,11 @@ void logger(const RtcDateTime& dt){
             dt.Hour(),
             dt.Minute(),
             dt.Second());
-  snprintf(logString, sizeof(logString), "%s,%s,%lf,%lf,%lf %lf,%f,%f\n",
+  snprintf(logString, sizeof(logString), "%s,%s,%s,%s,%s,%s,%f,%f\n",
            datestring, timestring, latitude, longitude, speed, altitude, volume, ullage);
   appendFile(SD, "/log.txt", logString);
-  snprintf(monitorString, sizeof(monitorString), "%s %s\nLatitude: %lf\nLongtitude: %lf\
-          \nSpeed: %.1lf(km/h)\nAltitude: %.1lf(m)\nVolume: %.1f(l)\nUllage: %.1f(l)",
+  snprintf(monitorString, sizeof(monitorString), "%s %s\nLatitude: %s\nLongtitude: %s\
+          \nSpeed: %s(km/h)\nAltitude: %s(m)\nVolume: %.1f(l)\nUllage: %.1f(l)",
           datestring, timestring, latitude, longitude, speed, altitude, volume, ullage);
   mqtt.publish(topic, monitorString);
 }
