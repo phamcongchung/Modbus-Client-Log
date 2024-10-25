@@ -1,8 +1,9 @@
 #include <Arduino.h>
+#include <esp_system.h>
 #include <ModbusRTUClient.h>
-#include <SoftwareSerial.h>
 #include <ArduinoRS485.h>
 #include <PubSubClient.h>
+#include <ArduinoJson.h>
 #include <RtcDS3231.h>
 #include <TinyGPS++.h>
 #include <iostream>
@@ -10,22 +11,17 @@
 #include <Wifi.h>
 #include <Wire.h>
 #include <SPI.h>
-#include "FS.h"
-#include "SD.h"
+#include <FS.h>
+#include <SD.h>
 
 #define TINY_GSM_MODEM_SIM7600
-// #define GPS_RXD       32
-// #define GPS_TXD       33
-#define SIM_BAUD      115200
-#define PUSH_INTERVAL 60000
-
-using namespace std;
+#define SIM_RXD   32
+#define SIM_TXD   33
+#define SIM_BAUD  115200
 
 #include <TinyGsmClient.h>
 
-// SoftwareSerial gpsSerial(GPS_RXD, GPS_TXD);
 HardwareSerial SerialAT(1);
-// TinyGPSPlus gps;
 TinyGsm modem(SerialAT);
 TinyGsmClient client(modem);
 PubSubClient mqtt(client);
@@ -33,22 +29,22 @@ RtcDS3231<TwoWire> Rtc(Wire);
 RtcDateTime now = Rtc.GetDateTime();
 RtcDateTime compiled; // Time at which the program is compiled
 
-float volume, ullage;
-String latitude, longitude, altitude, speed;
-char logString[100];
-char monitorString[150];
+float volume, ullage, temperature, product, water;
+float latitude, longitude;
+float capacity, height;
+String latDir, longDir, altitude, speed;
+static uint8_t mac[6];
+static char logString[300];
+static char monitorString[300];
 // GPRSS credentials
-const char apn[] = "v-internet";
-const char gprsUser[] = "";
-const char gprsPass[] = "";
-// WiFi credentials
-const char* ssid = "YOUR_WIFI_NAME";
-const char* password = "YOUR_WIFI_PASS";
+static char apn[] = "";
+static char gprsUser[] = "";
+static char gprsPass[] = "";
 // MQTT credentials
-const char* topic = "YOUR_TOPIC";
-const char* broker = "YOUR_BROKER_ADDRESS";
-const char* clientID = "YOUR_BROKER_CLIENT";
-const char* brokerUser = "YOUR_BROKER_USER";
+static char* topic = "YOUR_TOPIC";
+static char* broker = "YOUR_BROKER_ADDRESS";
+static char* clientID = "YOUR_BROKER_CLIENT";
+static char* brokerUser = "YOUR_BROKER_USER";
 
 void appendFile(fs::FS &fs, const char * path, const char * message);
 void writeFile(fs::FS &fs, const char * path, const char * message);
@@ -56,14 +52,25 @@ void mqttCallback(char* topic, byte* message, unsigned int len);
 void logger(const RtcDateTime& dt);
 void parseGPS(String gpsData);
 void mqttReconnect();
-// void gpsUpdate();
+void setConfig();
+void getTankConfig();
+void getProbeConfig();
+void getNetworkConfig();
+float convertToDecimalDegrees(String coord, String direction);
 String getValue(String data, char separator, int index);
 
 void setup() {
   // Initialize serial communication
   Serial.begin(115200);
-  SerialAT.begin(115200, SERIAL_8N1, 32, 33);
+  SerialAT.begin(SIM_BAUD, SERIAL_8N1, SIM_RXD, SIM_TXD);
   delay(3000);
+
+  // Retrieve MAC address
+  esp_efuse_mac_get_default(mac);
+  // Print the MAC address
+  Serial.printf("ESP32 MAC Address: %02X:%02X:%02X:%02X:%02X:%02X\n",
+                mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+  delay(500);
 
   Serial.println("Initializing modem...");
   modem.restart();
@@ -92,14 +99,6 @@ void setup() {
   Serial.print(__DATE__);
   Serial.println(__TIME__);
   delay(500);
-
-  // Initialize SoftwareSerial GPS communication
-  /*
-  gpsSerial.begin(GPS_BAUD);
-  Serial.println("SoftwareSerial GPS started at 9600 baud rate");
-  gpsUpdate();
-  delay(500);
-  */
 
   // Initialize the Modbus RTU client
   if (!ModbusRTUClient.begin(9600)) {
@@ -144,31 +143,18 @@ void setup() {
   delay(500);
   // If the log.txt file doesn't exist
   // Create a file on the SD card and write the data labels
-  File file = SD.open("/log.txt");
+  File file = SD.open("/log.csv");
   if(!file) {
     Serial.println("File doens't exist");
     Serial.println("Creating file...");
-    writeFile(SD, "/log.txt", "Date,Time,Volume(l),Ullage(l),Coordinates,\
-                              Speed(km/h),Altitude(m)\n");
+    writeFile(SD, "/log.csv", "Date;Time;Latitude;Longitude;Speed(km/h);Altitude(m);"
+                              "Volume(l);Ullage(l);Temperature(°C);"
+                              "Product level(mm);Water level(mm)\n");
   }
   else {
-    Serial.println("File already exists");  
+    Serial.println("File already exists");
   }
   file.close();
-
-  // Initialize WiFi communication
-  /*
-  WiFi.begin(ssid, password);
-  Serial.println("Connecting to WiFi");
-  while(WiFi.status() != WL_CONNECTED){
-    delay(500);
-    Serial.print(".");
-  }
-  Serial.println("");
-  Serial.print("WiFi is conncted at IP address: ");
-  Serial.println(WiFi.localIP());
-  delay (500);
-  */
 
   // Initialize MQTT broker
   mqtt.setServer(broker, 1883);
@@ -178,17 +164,6 @@ void setup() {
 }
 
 void loop() {
-  /*
-  if (millis() > 30000 && gps.charsProcessed() < 10)
-  {
-    Serial.println(F("No GPS detected: check wiring."));
-    delay(5000);
-  }
-  if (gpsSerial.available() > 0)
-    if (gps.encode(gpsSerial.read()))
-      if (gps.location.isUpdated())
-        gpsUpdate();
-  */
   if(!mqtt.connected()){
     mqttReconnect();
   }
@@ -263,44 +238,42 @@ void loop() {
     Serial.print("Ullage: ");
     Serial.println(ullage);
   }
+  temperature = ModbusRTUClient.holdingRegisterRead<float>(4, 0x0034, BIGEND);
+  if (temperature < 0) {
+    Serial.print("Failed to read temperature: ");
+    Serial.println(ModbusRTUClient.lastError());
+  } else {
+    Serial.print("Temperature: ");
+    Serial.println(temperature);
+  }
+  product = ModbusRTUClient.holdingRegisterRead<float>(4, 0x0030, BIGEND);
+  if (product < 0) {
+    Serial.print("Failed to read product level: ");
+    Serial.println(ModbusRTUClient.lastError());
+  } else {
+    Serial.print("Product level: ");
+    Serial.println(product);
+  }
+  water = ModbusRTUClient.holdingRegisterRead<float>(4, 0x0032, BIGEND);
+  if (water < 0) {
+    Serial.print("Failed to read water level: ");
+    Serial.println(ModbusRTUClient.lastError());
+  } else {
+    Serial.print("Water: ");
+    Serial.println(water);
+  }
 
   logger(now);
   delay(5000);
 }
 
-/*
-void gpsUpdate()
-{
-  Serial.print(F("Satellites: "));
-  Serial.println(gps.satellites.value());
-  Serial.print(F("Coordinates: ")); 
-  if (gps.location.isValid())
-  {
-    Serial.print(gps.location.lat(), 6);
-    latitude = gps.location.lat();
-    Serial.print(F(" "));
-    Serial.println(gps.location.lng(), 6);
-    longtitude = gps.location.lng();
-    Serial.print("SPEED(km/h): "); 
-    Serial.println(gps.speed.kmph());
-    speed = gps.speed.kmph();
-    Serial.print("ALT(min): "); 
-    Serial.println(gps.altitude.meters());
-    altitude = gps.altitude.meters();
-  }
-  else
-  {
-    Serial.println(F("INVALID"));
-  }
-}
-*/
-
 void parseGPS(String gpsData){
   // Split the string by commas
-  latitude = getValue(gpsData, ',', 0) + getValue(gpsData, ',', 1);
-  longitude = getValue(gpsData, ',', 2) + getValue(gpsData, ',', 3);
-  altitude = getValue(gpsData, ',', 6);
-  speed = getValue(gpsData, ',', 7);
+  String rawLat = getValue(gpsData, ',', 0); latDir = getValue(gpsData, ',', 1);
+  String rawLong = getValue(gpsData, ',', 2); longDir = getValue(gpsData, ',', 3);
+  altitude = getValue(gpsData, ',', 6); speed = getValue(gpsData, ',', 7);
+  latitude = convertToDecimalDegrees(rawLat, latDir);
+  longitude = convertToDecimalDegrees(rawLong, longDir);
 }
 
 String getValue(String data, char separator, int index) {
@@ -319,6 +292,20 @@ String getValue(String data, char separator, int index) {
   return found > index ? data.substring(strIndex[0], strIndex[1]) : "";
 }
 
+float convertToDecimalDegrees(String coord, String direction) {
+  // First two or three digits are degrees
+  int degrees = coord.substring(0, coord.indexOf('.')).toInt() / 100;
+  // Remaining digits are minutes
+  float minutes = coord.substring(coord.indexOf('.') - 2).toFloat();
+  // Convert to decimal degrees
+  float decimalDegrees = degrees + (minutes / 60);
+  // Apply direction (N/S or E/W)
+  if (direction == "S" || direction == "W") {
+    decimalDegrees = -decimalDegrees;  // South and West are negative
+  }
+  return decimalDegrees;
+}
+
 void logger(const RtcDateTime& dt){
   char datestring[20];
   char timestring[20];
@@ -334,12 +321,16 @@ void logger(const RtcDateTime& dt){
             dt.Hour(),
             dt.Minute(),
             dt.Second());
-  snprintf(logString, sizeof(logString), "%s,%s,%s,%s,%s,%s,%f,%f\n",
-           datestring, timestring, latitude, longitude, speed, altitude, volume, ullage);
-  appendFile(SD, "/log.txt", logString);
-  snprintf(monitorString, sizeof(monitorString), "%s %s\nLatitude: %s\nLongtitude: %s\
-          \nSpeed: %s(km/h)\nAltitude: %s(m)\nVolume: %.1f(l)\nUllage: %.1f(l)",
-          datestring, timestring, latitude, longitude, speed, altitude, volume, ullage);
+  snprintf(logString, sizeof(logString), "%s;%s;%f;%f;%s;%s;%.1f;%.1f;%.1f;%.1f;%.1f\n",
+           datestring, timestring, latitude, longitude, speed, altitude, volume, ullage,
+           temperature, product, water);
+  appendFile(SD, "/log.csv", logString);
+
+  snprintf(monitorString, sizeof(monitorString), "%s %s\nLatitude: %f\nLongitude: %f"
+          "\nSpeed: %s(km/h)\nAltitude: %s(m)\nVolume: %.1f(l)\nUllage: %.1f(l)"
+          "\nTemperature: %.1f(°C)\nProduct level: %.1f(mm)\nWater level: %.1f(mm)",
+          datestring, timestring, latitude, longitude, speed, altitude, volume, ullage,
+          temperature, product, water);
   mqtt.publish(topic, monitorString);
 }
 
@@ -373,6 +364,101 @@ void mqttCallback(char* topic, byte* message, unsigned int len) {
     messageTemp += (char)message[i];
   }
   Serial.println();
+}
+
+void getNetworkConfig(){
+  File file = SD.open("/config.json");
+  if (!file) {
+    Serial.println("Failed to open file for reading");
+    return;
+  }
+  // Allocate a JSON document
+  StaticJsonDocument<1024> config;
+  // Parse the JSON from the file
+  DeserializationError error = deserializeJson(config, file);
+  if (error) {
+    Serial.print("Failed to parse file: ");
+    Serial.println(error.f_str());
+    return;
+  }
+  file.close();
+
+  JsonObject networkConfig = config["Network Configuration"];
+  const char* tempApn = networkConfig["APN"];
+  if (tempApn != nullptr) {
+    // Copy with a max size limit to avoid overflow
+    strncpy((char*)apn, tempApn, sizeof(tempApn) - 1);
+    // Ensure null termination
+    apn[sizeof(apn) - 1] = '\0';
+  }
+
+  const char* tempGprsUser = networkConfig["GPRS User"];
+  if (tempGprsUser != nullptr) {
+    strncpy((char*)gprsUser, tempGprsUser, sizeof(tempGprsUser) - 1);
+    gprsUser[sizeof(gprsUser) - 1] = '\0';
+  }
+
+  const char* tempGprsPass = networkConfig["GPRS Password"];
+  if (tempGprsPass != nullptr){
+    strncpy((char*)gprsPass, tempGprsPass, sizeof(tempGprsPass) - 1);
+    gprsPass[sizeof(gprsPass) - 1] = '\0';
+  }
+
+  topic = networkConfig["Topic"];
+  broker = networkConfig["Broker"];
+  clientID = networkConfig["Client ID"];
+  brokerUser = networkConfig["Broker User"];
+}
+
+void getProbeConfig(){
+  File file = SD.open("/config.json");
+  if (!file) {
+    Serial.println("Failed to open file for reading");
+    return;
+  }
+  // Allocate a JSON document
+  StaticJsonDocument<1024> config;
+  // Parse the JSON from the file
+  DeserializationError error = deserializeJson(config, file);
+  if (error) {
+    Serial.print("Failed to parse file: ");
+    Serial.println(error.f_str());
+    return;
+  }
+  file.close();
+
+  // Access the Probe Configuration array
+  JsonArray probeConfigs = config["Probe Configuration"];
+  for(JsonObject probeConfig : probeConfigs){
+    String name = probeConfig["Name"];
+    String serialNo = probeConfig["Serial No"];
+    String protocol = probeConfig["Protocol"];
+    int id = probeConfig["ID"];
+  }
+}
+
+void getTankConfig(){
+  File file = SD.open("/config.json");
+  if (!file) {
+    Serial.println("Failed to open file for reading");
+    return;
+  }
+  StaticJsonDocument<1024> config;
+  DeserializationError error = deserializeJson(config, file);
+  if (error) {
+    Serial.print("Failed to parse file: ");
+    Serial.println(error.f_str());
+    return;
+  }
+  file.close();
+
+  JsonArray probeConfigs = config["Probe Configuration"];
+  for(JsonObject probeConfig : probeConfigs){
+    String name = probeConfig["Name"];
+    String serialNo = probeConfig["Serial No"];
+    String protocol = probeConfig["Protocol"];
+    int id = probeConfig["ID"];
+  }
 }
 
 void writeFile(fs::FS &fs, const char * path, const char * message) {
