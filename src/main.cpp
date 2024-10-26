@@ -54,7 +54,6 @@ void parseGPS(String gpsData);
 void mqttReconnect();
 void setConfig();
 void getTankConfig();
-void getProbeConfig();
 void getNetworkConfig();
 float convertToDecimalDegrees(String coord, String direction);
 String getValue(String data, char separator, int index);
@@ -383,8 +382,8 @@ void getNetworkConfig(){
   }
   file.close();
 
-  JsonObject networkConfig = config["Network Configuration"];
-  const char* tempApn = networkConfig["APN"];
+  JsonObject networkConfig = config["NetworkConfiguration"];
+  const char* tempApn = networkConfig["Apn"];
   if (tempApn != nullptr) {
     // Copy with a max size limit to avoid overflow
     strncpy((char*)apn, tempApn, sizeof(tempApn) - 1);
@@ -392,13 +391,13 @@ void getNetworkConfig(){
     apn[sizeof(apn) - 1] = '\0';
   }
 
-  const char* tempGprsUser = networkConfig["GPRS User"];
+  const char* tempGprsUser = networkConfig["GprsUser"];
   if (tempGprsUser != nullptr) {
     strncpy((char*)gprsUser, tempGprsUser, sizeof(tempGprsUser) - 1);
     gprsUser[sizeof(gprsUser) - 1] = '\0';
   }
 
-  const char* tempGprsPass = networkConfig["GPRS Password"];
+  const char* tempGprsPass = networkConfig["GprsPass"];
   if (tempGprsPass != nullptr){
     strncpy((char*)gprsPass, tempGprsPass, sizeof(tempGprsPass) - 1);
     gprsPass[sizeof(gprsPass) - 1] = '\0';
@@ -406,8 +405,8 @@ void getNetworkConfig(){
 
   topic = networkConfig["Topic"];
   broker = networkConfig["Broker"];
-  clientID = networkConfig["Client ID"];
-  brokerUser = networkConfig["Broker User"];
+  clientID = networkConfig["ClientId"];
+  brokerUser = networkConfig["BrokerUser"];
 }
 
 void getProbeConfig(){
@@ -428,36 +427,17 @@ void getProbeConfig(){
   file.close();
 
   // Access the Probe Configuration array
-  JsonArray probeConfigs = config["Probe Configuration"];
-  for(JsonObject probeConfig : probeConfigs){
-    String name = probeConfig["Name"];
-    String serialNo = probeConfig["Serial No"];
-    String protocol = probeConfig["Protocol"];
-    int id = probeConfig["ID"];
-  }
-}
-
-void getTankConfig(){
-  File file = SD.open("/config.json");
-  if (!file) {
-    Serial.println("Failed to open file for reading");
-    return;
-  }
-  StaticJsonDocument<1024> config;
-  DeserializationError error = deserializeJson(config, file);
-  if (error) {
-    Serial.print("Failed to parse file: ");
-    Serial.println(error.f_str());
-    return;
-  }
-  file.close();
-
-  JsonArray probeConfigs = config["Probe Configuration"];
-  for(JsonObject probeConfig : probeConfigs){
-    String name = probeConfig["Name"];
-    String serialNo = probeConfig["Serial No"];
-    String protocol = probeConfig["Protocol"];
-    int id = probeConfig["ID"];
+  JsonArray tankConfigs = config["TankConfiguration"];
+  for(JsonObject tankConfig : tankConfigs){
+    int tankId = tankConfig["TankId"];
+    height = tankConfig["Parameter"]["Height"];
+    capacity = tankConfig["Parameter"]["Capacity"];
+    JsonArray probes = tankConfig["Probe"];
+    for(JsonObject probe : probes){
+      String name = probe["Name"];
+      String serialNo = probe["SerialNo"];
+      int id = probe["Id"];
+    }
   }
 }
 
