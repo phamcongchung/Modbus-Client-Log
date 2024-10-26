@@ -7,12 +7,14 @@
 #include <RtcDS3231.h>
 #include <TinyGPS++.h>
 #include <iostream>
-#include <string>
 #include <Wifi.h>
 #include <Wire.h>
+#include <string>
 #include <SPI.h>
 #include <FS.h>
 #include <SD.h>
+
+using namespace std;
 
 #define TINY_GSM_MODEM_SIM7600
 #define SIM_RXD   32
@@ -27,12 +29,13 @@ TinyGsmClient client(modem);
 PubSubClient mqtt(client);
 RtcDS3231<TwoWire> Rtc(Wire);  
 RtcDateTime now = Rtc.GetDateTime();
-RtcDateTime compiled; // Time at which the program is compiled
+RtcDateTime compiled; // Time at which the program is compile
 
 float volume, ullage, temperature, product, water;
 float latitude, longitude;
 float capacity, height;
 String latDir, longDir, altitude, speed;
+int probeId[];
 static uint8_t mac[6];
 static char logString[300];
 static char monitorString[300];
@@ -52,13 +55,16 @@ void mqttCallback(char* topic, byte* message, unsigned int len);
 void logger(const RtcDateTime& dt);
 void parseGPS(String gpsData);
 void mqttReconnect();
-void setConfig();
+void saveConfig();
 void getTankConfig();
 void getNetworkConfig();
 float convertToDecimalDegrees(String coord, String direction);
 String getValue(String data, char separator, int index);
 
 void setup() {
+  getNetworkConfig();
+  getTankConfig();
+  delay(1000);
   // Initialize serial communication
   Serial.begin(115200);
   SerialAT.begin(SIM_BAUD, SERIAL_8N1, SIM_RXD, SIM_TXD);
@@ -330,6 +336,7 @@ void logger(const RtcDateTime& dt){
           "\nTemperature: %.1f(°C)\nProduct level: %.1f(mm)\nWater level: %.1f(mm)",
           datestring, timestring, latitude, longitude, speed, altitude, volume, ullage,
           temperature, product, water);
+
   mqtt.publish(topic, monitorString);
 }
 
@@ -409,7 +416,7 @@ void getNetworkConfig(){
   brokerUser = networkConfig["BrokerUser"];
 }
 
-void getProbeConfig(){
+void getTankConfig(){
   File file = SD.open("/config.json");
   if (!file) {
     Serial.println("Failed to open file for reading");
@@ -426,6 +433,7 @@ void getProbeConfig(){
   }
   file.close();
 
+  int i = 0;
   // Access the Probe Configuration array
   JsonArray tankConfigs = config["TankConfiguration"];
   for(JsonObject tankConfig : tankConfigs){
@@ -434,9 +442,10 @@ void getProbeConfig(){
     capacity = tankConfig["Parameter"]["Capacity"];
     JsonArray probes = tankConfig["Probe"];
     for(JsonObject probe : probes){
+      probeId[i] = probe["Id"];
       String name = probe["Name"];
       String serialNo = probe["SerialNo"];
-      int id = probe["Id"];
+      i++;
     }
   }
 }
