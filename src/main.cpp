@@ -1,6 +1,6 @@
 #include <Arduino.h>
-#include <esp_system.h>
 #include <ModbusRTUClient.h>
+#include <SoftwareSerial.h>
 #include <ArduinoRS485.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
@@ -11,19 +11,24 @@
 #include <Wire.h>
 #include <string>
 #include <SPI.h>
-#include <FS.h>
-#include <SD.h>
+#include "FS.h"
+#include "SD.h"
 
 using namespace std;
 
 #define TINY_GSM_MODEM_SIM7600
-#define SIM_RXD   32
-#define SIM_TXD   33
-#define SIM_BAUD  115200
+// #define GPS_RXD       32
+// #define GPS_TXD       33
+#define SIM_BAUD      115200
+#define PUSH_INTERVAL 60000
+
+using namespace std;
 
 #include <TinyGsmClient.h>
 
+// SoftwareSerial gpsSerial(GPS_RXD, GPS_TXD);
 HardwareSerial SerialAT(1);
+// TinyGPSPlus gps;
 TinyGsm modem(SerialAT);
 TinyGsmClient client(modem);
 PubSubClient mqtt(client);
@@ -40,14 +45,17 @@ static uint8_t mac[6];
 static char logString[300];
 static char monitorString[300];
 // GPRSS credentials
-static char apn[] = "";
-static char gprsUser[] = "";
-static char gprsPass[] = "";
+char apn[] = "v-internet";
+char gprsUser[] = "";
+char gprsPass[] = "";
+// WiFi credentials
+char* ssid = "YOUR_WIFI_NAME";
+char* password = "YOUR_WIFI_PASS";
 // MQTT credentials
-static char* topic = "YOUR_TOPIC";
-static char* broker = "YOUR_BROKER_ADDRESS";
-static char* clientID = "YOUR_BROKER_CLIENT";
-static char* brokerUser = "YOUR_BROKER_USER";
+char* topic = "YOUR_TOPIC";
+char* broker = "YOUR_BROKER_ADDRESS";
+char* clientID = "YOUR_BROKER_CLIENT";
+char* brokerUser = "YOUR_BROKER_USER";
 
 void appendFile(fs::FS &fs, const char * path, const char * message);
 void writeFile(fs::FS &fs, const char * path, const char * message);
@@ -55,10 +63,12 @@ void mqttCallback(char* topic, byte* message, unsigned int len);
 void logger(const RtcDateTime& dt);
 void parseGPS(String gpsData);
 void mqttReconnect();
+
 void saveConfig();
 void getTankConfig();
 void getNetworkConfig();
 float convertToDecimalDegrees(String coord, String direction);
+// void gpsUpdate();
 String getValue(String data, char separator, int index);
 
 void setup() {
@@ -67,10 +77,10 @@ void setup() {
   delay(1000);
   // Initialize serial communication
   Serial.begin(115200);
-  SerialAT.begin(SIM_BAUD, SERIAL_8N1, SIM_RXD, SIM_TXD);
+  SerialAT.begin(115200, SERIAL_8N1, 32, 33);
   delay(3000);
 
-  // Retrieve MAC address
+ // Retrieve MAC address
   esp_efuse_mac_get_default(mac);
   // Print the MAC address
   Serial.printf("ESP32 MAC Address: %02X:%02X:%02X:%02X:%02X:%02X\n",
@@ -148,16 +158,15 @@ void setup() {
   delay(500);
   // If the log.txt file doesn't exist
   // Create a file on the SD card and write the data labels
-  File file = SD.open("/log.csv");
+  File file = SD.open("/log.txt");
   if(!file) {
     Serial.println("File doens't exist");
     Serial.println("Creating file...");
-    writeFile(SD, "/log.csv", "Date;Time;Latitude;Longitude;Speed(km/h);Altitude(m);"
-                              "Volume(l);Ullage(l);Temperature(°C);"
-                              "Product level(mm);Water level(mm)\n");
+    writeFile(SD, "/log.txt", "Date,Time,Volume(l),Ullage(l),Coordinates,\
+                              Speed(km/h),Altitude(m)\n");
   }
   else {
-    Serial.println("File already exists");
+    Serial.println("File already exists");  
   }
   file.close();
 
@@ -243,37 +252,12 @@ void loop() {
     Serial.print("Ullage: ");
     Serial.println(ullage);
   }
-  temperature = ModbusRTUClient.holdingRegisterRead<float>(4, 0x0034, BIGEND);
-  if (temperature < 0) {
-    Serial.print("Failed to read temperature: ");
-    Serial.println(ModbusRTUClient.lastError());
-  } else {
-    Serial.print("Temperature: ");
-    Serial.println(temperature);
-  }
-  product = ModbusRTUClient.holdingRegisterRead<float>(4, 0x0030, BIGEND);
-  if (product < 0) {
-    Serial.print("Failed to read product level: ");
-    Serial.println(ModbusRTUClient.lastError());
-  } else {
-    Serial.print("Product level: ");
-    Serial.println(product);
-  }
-  water = ModbusRTUClient.holdingRegisterRead<float>(4, 0x0032, BIGEND);
-  if (water < 0) {
-    Serial.print("Failed to read water level: ");
-    Serial.println(ModbusRTUClient.lastError());
-  } else {
-    Serial.print("Water: ");
-    Serial.println(water);
-  }
 
   logger(now);
   delay(5000);
 }
 
 void parseGPS(String gpsData){
-  // Split the string by commas
   String rawLat = getValue(gpsData, ',', 0); latDir = getValue(gpsData, ',', 1);
   String rawLong = getValue(gpsData, ',', 2); longDir = getValue(gpsData, ',', 3);
   altitude = getValue(gpsData, ',', 6); speed = getValue(gpsData, ',', 7);
@@ -326,6 +310,7 @@ void logger(const RtcDateTime& dt){
             dt.Hour(),
             dt.Minute(),
             dt.Second());
+
   snprintf(logString, sizeof(logString), "%s;%s;%f;%f;%s;%s;%.1f;%.1f;%.1f;%.1f;%.1f\n",
            datestring, timestring, latitude, longitude, speed, altitude, volume, ullage,
            temperature, product, water);
@@ -337,6 +322,12 @@ void logger(const RtcDateTime& dt){
           datestring, timestring, latitude, longitude, speed, altitude, volume, ullage,
           temperature, product, water);
 
+  snprintf(logString, sizeof(logString), "%s,%s,%s,%s,%s,%s,%f,%f\n",
+           datestring, timestring, latitude, longitude, speed, altitude, volume, ullage);
+  appendFile(SD, "/log.txt", logString);
+  snprintf(monitorString, sizeof(monitorString), "%s %s\nLatitude: %s\nLongtitude: %s\
+          \nSpeed: %s(km/h)\nAltitude: %s(m)\nVolume: %.1f(l)\nUllage: %.1f(l)",
+          datestring, timestring, latitude, longitude, speed, altitude, volume, ullage);
   mqtt.publish(topic, monitorString);
 }
 
