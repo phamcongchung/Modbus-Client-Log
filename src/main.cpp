@@ -14,13 +14,9 @@
 #include "FS.h"
 #include "SD.h"
 
-using namespace std;
-
 #define TINY_GSM_MODEM_SIM7600
 #define SIM_BAUD      115200
 #define PUSH_INTERVAL 60000
-
-using namespace std;
 
 #include <TinyGsmClient.h>
 
@@ -316,13 +312,7 @@ void logger(const RtcDateTime& dt){
           "\nTemperature: %.1f(°C)\nProduct level: %.1f(mm)\nWater level: %.1f(mm)",
           datestring, timestring, latitude, longitude, speed, altitude, volume, ullage,
           temperature, product, water);
-
-  snprintf(logString, sizeof(logString), "%s,%s,%s,%s,%s,%s,%f,%f\n",
-           datestring, timestring, latitude, longitude, speed, altitude, volume, ullage);
-  appendFile(SD, "/log.txt", logString);
-  snprintf(monitorString, sizeof(monitorString), "%s %s\nLatitude: %s\nLongtitude: %s\
-          \nSpeed: %s(km/h)\nAltitude: %s(m)\nVolume: %.1f(l)\nUllage: %.1f(l)",
-          datestring, timestring, latitude, longitude, speed, altitude, volume, ullage);
+          
   mqtt.publish(topic, monitorString);
 }
 
