@@ -17,8 +17,6 @@
 using namespace std;
 
 #define TINY_GSM_MODEM_SIM7600
-// #define GPS_RXD       32
-// #define GPS_TXD       33
 #define SIM_BAUD      115200
 #define PUSH_INTERVAL 60000
 
@@ -26,9 +24,7 @@ using namespace std;
 
 #include <TinyGsmClient.h>
 
-// SoftwareSerial gpsSerial(GPS_RXD, GPS_TXD);
 HardwareSerial SerialAT(1);
-// TinyGPSPlus gps;
 TinyGsm modem(SerialAT);
 TinyGsmClient client(modem);
 PubSubClient mqtt(client);
@@ -68,7 +64,6 @@ void saveConfig();
 void getTankConfig();
 void getNetworkConfig();
 float convertToDecimalDegrees(String coord, String direction);
-// void gpsUpdate();
 String getValue(String data, char separator, int index);
 
 void setup() {
