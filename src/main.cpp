@@ -38,36 +38,32 @@ static ProbeData probeData;
 // Define Modbus addresses
 const uint16_t modbusReg[] = {0x0036, 0x003C, 0x0034, 0x0030, 0x0032};
 const size_t DATA_COUNT = sizeof(modbusReg) / sizeof(modbusReg[0]);
-
+// GPS data
 float latitude, longitude;
-float capacity, height;
 String latDir, longDir, altitude, speed;
+String device, seriaNo;
 int probeId[];
 static uint8_t mac[6];
 static char logString[300];
 static char monitorString[300];
 // GPRSS credentials
-char apn[] = "v-internet";
+char apn[] = "";
 char gprsUser[] = "";
 char gprsPass[] = "";
-// WiFi credentials
-char* ssid = "YOUR_WIFI_NAME";
-char* password = "YOUR_WIFI_PASS";
 // MQTT credentials
-char* topic = "YOUR_TOPIC";
-char* broker = "YOUR_BROKER_ADDRESS";
-char* clientID = "YOUR_BROKER_CLIENT";
-char* brokerUser = "YOUR_BROKER_USER";
+const char* topic = "";
+const char* broker = "";
+const char* clientID = "";
+const char* brokerUser = "";
 
 void appendFile(fs::FS &fs, const char * path, const char * message);
 void writeFile(fs::FS &fs, const char * path, const char * message);
 void mqttCallback(char* topic, byte* message, unsigned int len);
-void logger(const RtcDateTime& dt);
+void localLog(const RtcDateTime& dt);
+void remotePush(const RtcDateTime& dt);
 void readData(ProbeData &data);
 void parseGPS(String gpsData);
 void mqttReconnect();
-
-void saveConfig();
 void getTankConfig();
 void getNetworkConfig();
 float convertToDecimalDegrees(String coord, String direction);
@@ -241,7 +237,7 @@ void loop() {
 
   readData(probeData);
 
-  logger(now);
+  localLog(now);
   delay(5000);
 }
 
@@ -304,7 +300,7 @@ void readData(ProbeData &data) {
   Serial.print("Water: "); Serial.println(data.water);
 }
 
-void logger(const RtcDateTime& dt){
+void localLog(const RtcDateTime& dt){
   char datestring[20];
   char timestring[20];
   snprintf_P(datestring,
@@ -324,14 +320,6 @@ void logger(const RtcDateTime& dt){
            datestring, timestring, latitude, longitude, speed, altitude, probeData.volume,
            probeData.ullage, probeData.temperature, probeData.product, probeData.water);
   appendFile(SD, "/log.csv", logString);
-
-  snprintf(monitorString, sizeof(monitorString), "%s %s\nLatitude: %f\nLongitude: %f"
-          "\nSpeed: %s(km/h)\nAltitude: %s(m)\nVolume: %.1f(l)\nUllage: %.1f(l)"
-          "\nTemperature: %.1f(°C)\nProduct level: %.1f(mm)\nWater level: %.1f(mm)",
-          datestring, timestring, latitude, longitude, speed, altitude, probeData.volume,
-          probeData.ullage, probeData.temperature, probeData.product, probeData.water);
-          
-  mqtt.publish(topic, monitorString);
 }
 
 void mqttReconnect() {
@@ -373,7 +361,7 @@ void getNetworkConfig(){
     return;
   }
   // Allocate a JSON document
-  StaticJsonDocument<1024> config;
+  StaticJsonDocument<128> config;
   // Parse the JSON from the file
   DeserializationError error = deserializeJson(config, file);
   if (error) {
@@ -404,10 +392,10 @@ void getNetworkConfig(){
     gprsPass[sizeof(gprsPass) - 1] = '\0';
   }
 
-  topic = networkConfig["Topic"];
-  broker = networkConfig["Broker"];
-  clientID = networkConfig["ClientId"];
-  brokerUser = networkConfig["BrokerUser"];
+  topic = networkConfig["Topic"].as<const char*>();
+  broker = networkConfig["Broker"].as<const char*>();
+  clientID = networkConfig["ClientId"].as<const char*>();
+  brokerUser = networkConfig["BrokerUser"].as<const char*>();
 }
 
 void getTankConfig(){
@@ -417,7 +405,7 @@ void getTankConfig(){
     return;
   }
   // Allocate a JSON document
-  StaticJsonDocument<1024> config;
+  StaticJsonDocument<512> config;
   // Parse the JSON from the file
   DeserializationError error = deserializeJson(config, file);
   if (error) {
@@ -429,18 +417,12 @@ void getTankConfig(){
 
   int i = 0;
   // Access the Probe Configuration array
-  JsonArray tankConfigs = config["TankConfiguration"];
-  for(JsonObject tankConfig : tankConfigs){
-    int tankId = tankConfig["TankId"];
-    height = tankConfig["Parameter"]["Height"];
-    capacity = tankConfig["Parameter"]["Capacity"];
-    JsonArray probes = tankConfig["Probe"];
-    for(JsonObject probe : probes){
-      probeId[i] = probe["Id"];
-      String name = probe["Name"];
-      String serialNo = probe["SerialNo"];
-      i++;
-    }
+  JsonArray tanks = config["TankConfiguration"];
+  for(JsonObject tank : tanks){
+    probeId[i] = tank["Id"];
+    String device = tank["Device"];
+    String serialNo = tank["SerialNo"];
+    i++;
   }
 }
 
