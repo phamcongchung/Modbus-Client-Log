@@ -5,14 +5,12 @@
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include <RtcDS3231.h>
-#include <TinyGPS++.h>
 #include <iostream>
-#include <Wifi.h>
 #include <Wire.h>
 #include <string>
 #include <SPI.h>
-#include "FS.h"
-#include "SD.h"
+#include <FS.h>
+#include <SD.h>
 
 #define TINY_GSM_MODEM_SIM7600
 #define SIM_BAUD      115200
@@ -28,7 +26,19 @@ RtcDS3231<TwoWire> Rtc(Wire);
 RtcDateTime now = Rtc.GetDateTime();
 RtcDateTime compiled; // Time at which the program is compile
 
-float volume, ullage, temperature, product, water;
+struct ProbeData {
+  float volume;
+  float ullage;
+  float temperature;
+  float product;
+  float water;
+};
+
+static ProbeData probeData;
+// Define Modbus addresses
+const uint16_t modbusReg[] = {0x0036, 0x003C, 0x0034, 0x0030, 0x0032};
+const size_t DATA_COUNT = sizeof(modbusReg) / sizeof(modbusReg[0]);
+
 float latitude, longitude;
 float capacity, height;
 String latDir, longDir, altitude, speed;
@@ -53,6 +63,7 @@ void appendFile(fs::FS &fs, const char * path, const char * message);
 void writeFile(fs::FS &fs, const char * path, const char * message);
 void mqttCallback(char* topic, byte* message, unsigned int len);
 void logger(const RtcDateTime& dt);
+void readData(ProbeData &data);
 void parseGPS(String gpsData);
 void mqttReconnect();
 
@@ -153,8 +164,9 @@ void setup() {
   if(!file) {
     Serial.println("File doens't exist");
     Serial.println("Creating file...");
-    writeFile(SD, "/log.txt", "Date,Time,Volume(l),Ullage(l),Coordinates,\
-                              Speed(km/h),Altitude(m)\n");
+    writeFile(SD, "/log.txt", "Date,Time,Latitude,Longitude,Speed(km/h),Altitude(m)"
+                              "Volume(l),Ullage(l),Temperature(°C)"
+                              "Product level(mm),Water level(mm)\n");
   }
   else {
     Serial.println("File already exists");  
@@ -227,22 +239,7 @@ void loop() {
     Serial.println("RTC is the same as compile time! (not expected but acceptable)");
   }
 
-  volume = ModbusRTUClient.holdingRegisterRead<float>(4, 0x0036, BIGEND);
-  if (volume < 0) {
-    Serial.print("Failed to read volume: ");
-    Serial.println(ModbusRTUClient.lastError());
-  } else {
-    Serial.print("Volume: ");
-    Serial.println(volume);
-  }
-  ullage = ModbusRTUClient.holdingRegisterRead<float>(4, 0x003C, BIGEND);
-  if (ullage < 0) {
-    Serial.print("Failed to read ullage: ");
-    Serial.println(ModbusRTUClient.lastError());
-  } else {
-    Serial.print("Ullage: ");
-    Serial.println(ullage);
-  }
+  readData(probeData);
 
   logger(now);
   delay(5000);
@@ -286,6 +283,27 @@ float convertToDecimalDegrees(String coord, String direction) {
   return decimalDegrees;
 }
 
+void readData(ProbeData &data) {
+  float *dataPointers[] = {&data.volume, &data.ullage, &data.temperature, &data.product, &data.water};
+  
+  for (size_t i = 0; i < DATA_COUNT; ++i) {
+    *dataPointers[i] = ModbusRTUClient.holdingRegisterRead<float>(4, modbusReg[i], BIGEND);
+    
+    if (*dataPointers[i] < 0) {
+      Serial.print("Failed to read ");
+      Serial.println(i == 0 ? "volume" : (i == 1 ? "ullage" : (i == 2 ? "temperature" : (i == 3 ? "product" : "water"))));
+      Serial.println(ModbusRTUClient.lastError());
+    }
+  }
+  
+  // Optionally print data after reading
+  Serial.print("Volume: "); Serial.println(data.volume);
+  Serial.print("Ullage: "); Serial.println(data.ullage);
+  Serial.print("Temperature: "); Serial.println(data.temperature);
+  Serial.print("Product: "); Serial.println(data.product);
+  Serial.print("Water: "); Serial.println(data.water);
+}
+
 void logger(const RtcDateTime& dt){
   char datestring[20];
   char timestring[20];
@@ -303,15 +321,15 @@ void logger(const RtcDateTime& dt){
             dt.Second());
 
   snprintf(logString, sizeof(logString), "%s;%s;%f;%f;%s;%s;%.1f;%.1f;%.1f;%.1f;%.1f\n",
-           datestring, timestring, latitude, longitude, speed, altitude, volume, ullage,
-           temperature, product, water);
+           datestring, timestring, latitude, longitude, speed, altitude, probeData.volume,
+           probeData.ullage, probeData.temperature, probeData.product, probeData.water);
   appendFile(SD, "/log.csv", logString);
 
   snprintf(monitorString, sizeof(monitorString), "%s %s\nLatitude: %f\nLongitude: %f"
           "\nSpeed: %s(km/h)\nAltitude: %s(m)\nVolume: %.1f(l)\nUllage: %.1f(l)"
           "\nTemperature: %.1f(°C)\nProduct level: %.1f(mm)\nWater level: %.1f(mm)",
-          datestring, timestring, latitude, longitude, speed, altitude, volume, ullage,
-          temperature, product, water);
+          datestring, timestring, latitude, longitude, speed, altitude, probeData.volume,
+          probeData.ullage, probeData.temperature, probeData.product, probeData.water);
           
   mqtt.publish(topic, monitorString);
 }
