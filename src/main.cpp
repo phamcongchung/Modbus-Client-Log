@@ -6,6 +6,7 @@
 #include <ArduinoJson.h>
 #include <RtcDS3231.h>
 #include <iostream>
+#include <vector>
 #include <Wire.h>
 #include <string>
 #include <SPI.h>
@@ -13,6 +14,8 @@
 #include <SD.h>
 
 #define TINY_GSM_MODEM_SIM7600
+#define SIM_RXD       32
+#define SIM_TXD       33
 #define SIM_BAUD      115200
 #define PUSH_INTERVAL 60000
 
@@ -33,23 +36,27 @@ struct ProbeData {
   float product;
   float water;
 };
+static ProbeData probeData[sizeof(probeId)];
 
-static ProbeData probeData;
-// Define Modbus addresses
+/* Define Modbus registers
 const uint16_t modbusReg[] = {0x0036, 0x003C, 0x0034, 0x0030, 0x0032};
 const size_t DATA_COUNT = sizeof(modbusReg) / sizeof(modbusReg[0]);
+*/
 // GPS data
 float latitude, longitude;
 String latDir, longDir, altitude, speed;
 String device, seriaNo;
-int probeId[];
+// Declare dynamic array for probe IDs
+std::vector<int> probeId;
+// Create a string to hold the formatted MAC address
 static uint8_t mac[6];
+static char macStr[18];
 static char logString[300];
 static char monitorString[300];
 // GPRSS credentials
-char apn[] = "";
-char gprsUser[] = "";
-char gprsPass[] = "";
+char apn[10];
+char gprsUser[10];
+char gprsPass[10];
 // MQTT credentials
 const char* topic = "";
 const char* broker = "";
@@ -59,32 +66,62 @@ const char* brokerUser = "";
 void appendFile(fs::FS &fs, const char * path, const char * message);
 void writeFile(fs::FS &fs, const char * path, const char * message);
 void mqttCallback(char* topic, byte* message, unsigned int len);
-void localLog(const RtcDateTime& dt);
 void remotePush(const RtcDateTime& dt);
-void readData(ProbeData &data);
+void localLog(const RtcDateTime& dt);
+// void readData(ProbeData &data);
 void parseGPS(String gpsData);
-void mqttReconnect();
-void getTankConfig();
 void getNetworkConfig();
+void getTankConfig();
+void mqttReconnect();
 float convertToDecimalDegrees(String coord, String direction);
 String getValue(String data, char separator, int index);
 
 void setup() {
+  // Initialize serial communication
+  Serial.begin(115200);
+  SerialAT.begin(115200, SERIAL_8N1, SIM_RXD, SIM_TXD);
+  delay(3000);
+
+  // Retrieve MAC address
+  esp_efuse_mac_get_default(mac);
+  // Format the MAC address into the string
+  sprintf(macStr, "%02X:%02X:%02X:%02X:%02X:%02X",
+          mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+  // Print the MAC address
+  Serial.printf("ESP32 MAC Address: %s\n", macStr);
+  delay(1000);
+
+  // Initialize the microSD card
+  if(!SD.begin(5)){
+    Serial.println("Card Mount Failed");
+    return;
+  }
+  uint8_t cardType = SD.cardType();
+
+  if(cardType == CARD_NONE){
+    Serial.println("No SD card attached");
+    return;
+  }
+  // Check SD card type
+  Serial.print("SD Card Type: ");
+  if(cardType == CARD_MMC){
+    Serial.println("MMC");
+  } else if(cardType == CARD_SD){
+    Serial.println("SDSC");
+  } else if(cardType == CARD_SDHC){
+    Serial.println("SDHC");
+  } else {
+    Serial.println("UNKNOWN");
+  }
+  // Check SD card size
+  uint64_t cardSize = SD.cardSize() / (1024 * 1024);
+  Serial.printf("SD Card Size: %lluMB\n", cardSize);
+  delay(500);
+
   getNetworkConfig();
   getTankConfig();
   delay(1000);
-  // Initialize serial communication
-  Serial.begin(115200);
-  SerialAT.begin(115200, SERIAL_8N1, 32, 33);
-  delay(3000);
-
- // Retrieve MAC address
-  esp_efuse_mac_get_default(mac);
-  // Print the MAC address
-  Serial.printf("ESP32 MAC Address: %02X:%02X:%02X:%02X:%02X:%02X\n",
-                mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-  delay(500);
-
+  
   Serial.println("Initializing modem...");
   modem.restart();
   
@@ -128,39 +165,13 @@ void setup() {
   Rtc.Enable32kHzPin(false);
   Rtc.SetSquareWavePin(DS3231SquareWavePin_ModeNone);
 
-  // Initialize the microSD card
-  if(!SD.begin(5)){
-    Serial.println("Card Mount Failed");
-    return;
-  }
-  uint8_t cardType = SD.cardType();
-
-  if(cardType == CARD_NONE){
-    Serial.println("No SD card attached");
-    return;
-  }
-  // Check SD card type
-  Serial.print("SD Card Type: ");
-  if(cardType == CARD_MMC){
-    Serial.println("MMC");
-  } else if(cardType == CARD_SD){
-    Serial.println("SDSC");
-  } else if(cardType == CARD_SDHC){
-    Serial.println("SDHC");
-  } else {
-    Serial.println("UNKNOWN");
-  }
-  // Check SD card size
-  uint64_t cardSize = SD.cardSize() / (1024 * 1024);
-  Serial.printf("SD Card Size: %lluMB\n", cardSize);
-  delay(500);
   // If the log.txt file doesn't exist
   // Create a file on the SD card and write the data labels
-  File file = SD.open("/log.txt");
+  File file = SD.open("/log.csv");
   if(!file) {
     Serial.println("File doens't exist");
     Serial.println("Creating file...");
-    writeFile(SD, "/log.txt", "Date,Time,Latitude,Longitude,Speed(km/h),Altitude(m)"
+    writeFile(SD, "/log.csv", "Date,Time,Latitude,Longitude,Speed(km/h),Altitude(m)"
                               "Volume(l),Ullage(l),Temperature(°C)"
                               "Product level(mm),Water level(mm)\n");
   }
@@ -177,11 +188,8 @@ void setup() {
 }
 
 void loop() {
-  if(!mqtt.connected()){
-    mqttReconnect();
-  }
   mqtt.loop();
-  
+
   modem.sendAT("+CGPSINFO");
   if (modem.waitResponse(10000L, "+CGPSINFO:") == 1) {
     String gpsData = modem.stream.readStringUntil('\n');
@@ -235,8 +243,24 @@ void loop() {
     Serial.println("RTC is the same as compile time! (not expected but acceptable)");
   }
 
-  readData(probeData);
+  // readData(probeData);
+  probeData.volume = ModbusRTUClient.holdingRegisterRead<float>(4, 0x0036, BIGEND);
+  if (probeData.volume < 0) {
+    Serial.print("Failed to read volume: ");
+    Serial.println(ModbusRTUClient.lastError());
+  } else {
+    Serial.println("Volume: " + String(probeData.volume));
+  }
 
+  probeData.ullage = ModbusRTUClient.holdingRegisterRead<float>(4, 0x003C, BIGEND);
+  if (probeData.ullage < 0) {
+    Serial.print("Failed to read ullage: ");
+    Serial.println(ModbusRTUClient.lastError());
+  } else {
+    Serial.println("Ullage: " + String(probeData.ullage));
+  }
+
+  remotePush(now);
   localLog(now);
   delay(5000);
 }
@@ -278,7 +302,7 @@ float convertToDecimalDegrees(String coord, String direction) {
   }
   return decimalDegrees;
 }
-
+/*
 void readData(ProbeData &data) {
   float *dataPointers[] = {&data.volume, &data.ullage, &data.temperature, &data.product, &data.water};
   
@@ -299,59 +323,77 @@ void readData(ProbeData &data) {
   Serial.print("Product: "); Serial.println(data.product);
   Serial.print("Water: "); Serial.println(data.water);
 }
+*/
+void remotePush(const RtcDateTime& dt){
+  if(!mqtt.connected()){
+    mqttReconnect();
+  }
 
-void localLog(const RtcDateTime& dt){
-  char datestring[20];
-  char timestring[20];
-  snprintf_P(datestring,
-            countof(datestring),
+  char dateString[20];
+  char timeString[20];
+  snprintf_P(dateString,
+            countof(dateString),
             PSTR("%02u/%02u/%04u"),
             dt.Month(),
             dt.Day(),
             dt.Year());
-  snprintf_P(timestring,
-            countof(timestring),
+  snprintf_P(timeString,
+            countof(timeString),
+            PSTR("%02u:%02u:%02u"),
+            dt.Hour(),
+            dt.Minute(),
+            dt.Second());
+  // Combine date and time into a single string
+  char dateTimeString[40];
+  snprintf(dateTimeString, sizeof(dateTimeString), "%s %s", dateString, timeString);
+
+  StaticJsonDocument<512> data;
+  data["Device"] = macStr;
+  data["Date/Time"] = dateTimeString;
+
+  JsonObject gps = data.createNestedObject("Gps");
+  gps["Latitude"] = latitude;
+  gps["Longitude"] = longitude;
+  gps["Altitude"] = altitude;
+  gps["Speed"] = speed;
+
+  JsonArray measures = data.createNestedArray("Measure");
+  for(int i = 0; i < probeId.size(); i++){
+    JsonObject measure = measures.createNestedObject();
+    measure["Id"] = probeId[i];
+    measure["Volume"] = probeData.volume;
+    measure["Ullage"] = probeData.ullage;
+    measure["Temperature"] = probeData.temperature;
+    measure["ProductLevel"] = probeData.product;
+    measure["WaterLevel"] = probeData.water;
+
+    // Serialize JSON and publish
+    char buffer[512];
+    size_t n = serializeJson(data, buffer);
+    mqtt.publish(topic, buffer, n);
+  }
+}
+
+void localLog(const RtcDateTime& dt){
+  char dateString[20];
+  char timeString[20];
+  snprintf_P(dateString,
+            countof(dateString),
+            PSTR("%02u/%02u/%04u"),
+            dt.Month(),
+            dt.Day(),
+            dt.Year());
+  snprintf_P(timeString,
+            countof(timeString),
             PSTR("%02u:%02u:%02u"),
             dt.Hour(),
             dt.Minute(),
             dt.Second());
 
   snprintf(logString, sizeof(logString), "%s;%s;%f;%f;%s;%s;%.1f;%.1f;%.1f;%.1f;%.1f\n",
-           datestring, timestring, latitude, longitude, speed, altitude, probeData.volume,
+           dateString, timeString, latitude, longitude, speed, altitude, probeData.volume,
            probeData.ullage, probeData.temperature, probeData.product, probeData.water);
   appendFile(SD, "/log.csv", logString);
-}
-
-void mqttReconnect() {
-  // Loop until we're reconnected
-  while (!mqtt.connected()) {
-    Serial.print("Attempting MQTT connection...");
-    // Attempt to connect
-    if (mqtt.connect(clientID)) {
-      Serial.println("Connected");
-      // Subscribe
-      mqtt.subscribe(topic);
-    } else {
-      Serial.print("Failed, rc=");
-      Serial.print(mqtt.state());
-      Serial.println("Try again in 5 seconds");
-      // Wait 5 seconds before retrying
-      delay(5000);
-    }
-  }
-}
-
-void mqttCallback(char* topic, byte* message, unsigned int len) {
-  Serial.print("Message arrived on topic: ");
-  Serial.print(topic);
-  Serial.print(". Message: ");
-  String messageTemp;
-  
-  for (int i = 0; i < len; i++) {
-    Serial.print((char)message[i]);
-    messageTemp += (char)message[i];
-  }
-  Serial.println();
 }
 
 void getNetworkConfig(){
@@ -372,26 +414,13 @@ void getNetworkConfig(){
   file.close();
 
   JsonObject networkConfig = config["NetworkConfiguration"];
+
   const char* tempApn = networkConfig["Apn"];
   if (tempApn != nullptr) {
     // Copy with a max size limit to avoid overflow
-    strncpy((char*)apn, tempApn, sizeof(tempApn) - 1);
-    // Ensure null termination
-    apn[sizeof(apn) - 1] = '\0';
+    strcpy(apn, tempApn);
+    Serial.println(apn);
   }
-
-  const char* tempGprsUser = networkConfig["GprsUser"];
-  if (tempGprsUser != nullptr) {
-    strncpy((char*)gprsUser, tempGprsUser, sizeof(tempGprsUser) - 1);
-    gprsUser[sizeof(gprsUser) - 1] = '\0';
-  }
-
-  const char* tempGprsPass = networkConfig["GprsPass"];
-  if (tempGprsPass != nullptr){
-    strncpy((char*)gprsPass, tempGprsPass, sizeof(tempGprsPass) - 1);
-    gprsPass[sizeof(gprsPass) - 1] = '\0';
-  }
-
   topic = networkConfig["Topic"].as<const char*>();
   broker = networkConfig["Broker"].as<const char*>();
   clientID = networkConfig["ClientId"].as<const char*>();
@@ -424,6 +453,38 @@ void getTankConfig(){
     String serialNo = tank["SerialNo"];
     i++;
   }
+}
+
+void mqttReconnect() {
+  // Loop until we're reconnected
+  while (!mqtt.connected()) {
+    Serial.print("Attempting MQTT connection...");
+    // Attempt to connect
+    if (mqtt.connect(clientID)) {
+      Serial.println("Connected");
+      // Subscribe
+      mqtt.subscribe(topic);
+    } else {
+      Serial.print("Failed, rc=");
+      Serial.print(mqtt.state());
+      Serial.println("Try again in 5 seconds");
+      // Wait 5 seconds before retrying
+      delay(5000);
+    }
+  }
+}
+
+void mqttCallback(char* topic, byte* message, unsigned int len) {
+  Serial.print("Message arrived on topic: ");
+  Serial.print(topic);
+  Serial.print(". Message: ");
+  String messageTemp;
+  
+  for (int i = 0; i < len; i++) {
+    Serial.print((char)message[i]);
+    messageTemp += (char)message[i];
+  }
+  Serial.println();
 }
 
 void writeFile(fs::FS &fs, const char * path, const char * message) {
