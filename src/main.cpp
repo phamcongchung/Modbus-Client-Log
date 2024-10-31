@@ -41,10 +41,10 @@ struct ProbeData {
 std::vector<int> probeId;
 std::vector<ProbeData> probeData;
 
-/* Define Modbus registers
+//Define Modbus registers
 const uint16_t modbusReg[] = {0x0036, 0x003C, 0x0034, 0x0030, 0x0032};
-const size_t DATA_COUNT = sizeof(modbusReg) / sizeof(modbusReg[0]);
-*/
+const size_t DATA_COUNT = 5;
+
 // GPS data
 float latitude, longitude;
 String latDir, longDir, altitude, speed;
@@ -69,7 +69,7 @@ void writeFile(fs::FS &fs, const char * path, const char * message);
 void mqttCallback(char* topic, byte* message, unsigned int len);
 void remotePush(const RtcDateTime& dt);
 void localLog(const RtcDateTime& dt);
-// void readData(ProbeData &data);
+void readData();
 void parseGPS(String gpsData);
 void getNetworkConfig();
 void getTankConfig();
@@ -244,8 +244,8 @@ void loop() {
     Serial.println("RTC is the same as compile time! (not expected but acceptable)");
   }
 
-  // readData(probeData);
-  for(int i = 0; i < probeId.size(); i++){
+  readData();
+  /*for(int i = 0; i < probeId.size(); i++){
     probeData[i].volume = ModbusRTUClient.holdingRegisterRead<float>(4, 0x0036, BIGEND);
     if (probeData[i].volume < 0) {
       Serial.print("Failed to read volume: ");
@@ -262,6 +262,7 @@ void loop() {
       Serial.println("Ullage: " + String(probeData[i].ullage));
     }
   }
+  */
   remotePush(now);
   localLog(now);
   delay(5000);
@@ -304,28 +305,34 @@ float convertToDecimalDegrees(String coord, String direction) {
   }
   return decimalDegrees;
 }
-/*
-void readData(ProbeData &data) {
-  float *dataPointers[] = {&data.volume, &data.ullage, &data.temperature, &data.product, &data.water};
-  
-  for (size_t i = 0; i < DATA_COUNT; ++i) {
-    *dataPointers[i] = ModbusRTUClient.holdingRegisterRead<float>(4, modbusReg[i], BIGEND);
+
+void readData() {
+  for (size_t i = 0; i < probeData.size(); ++i) {
+    float* dataPointers[] = {&probeData[i].volume, &probeData[i].ullage, 
+                             &probeData[i].temperature, &probeData[i].product, 
+                             &probeData[i].water};
     
-    if (*dataPointers[i] < 0) {
-      Serial.print("Failed to read ");
-      Serial.println(i == 0 ? "volume" : (i == 1 ? "ullage" : (i == 2 ? "temperature" : (i == 3 ? "product" : "water"))));
-      Serial.println(ModbusRTUClient.lastError());
+    for (size_t i = 0; i < DATA_COUNT; ++i) {
+      *dataPointers[i] = ModbusRTUClient.holdingRegisterRead<float>(4, modbusReg[i], BIGEND);
+
+      if (*dataPointers[i] < 0) {
+        Serial.print("Failed to read ");
+        Serial.print(i == 0 ? "volume" : (i == 1 ? "ullage" : (i == 2 ? "temperature" : (i == 3 ? "product" : "water"))));
+        Serial.print(" for probe ID: ");
+        Serial.println(probeId[i]);
+        Serial.println(ModbusRTUClient.lastError());
+      }
     }
+    // Optionally print data after reading
+    Serial.print("Probe ID: "); Serial.println(probeId[i]);
+    Serial.print("Volume: "); Serial.println(probeData[i].volume);
+    Serial.print("Ullage: "); Serial.println(probeData[i].ullage);
+    Serial.print("Temperature: "); Serial.println(probeData[i].temperature);
+    Serial.print("Product: "); Serial.println(probeData[i].product);
+    Serial.print("Water: "); Serial.println(probeData[i].water);
   }
-  
-  // Optionally print data after reading
-  Serial.print("Volume: "); Serial.println(data.volume);
-  Serial.print("Ullage: "); Serial.println(data.ullage);
-  Serial.print("Temperature: "); Serial.println(data.temperature);
-  Serial.print("Product: "); Serial.println(data.product);
-  Serial.print("Water: "); Serial.println(data.water);
 }
-*/
+
 void remotePush(const RtcDateTime& dt){
   if(!mqtt.connected()){
     mqttReconnect();
