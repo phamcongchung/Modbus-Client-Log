@@ -29,6 +29,7 @@ RtcDS3231<TwoWire> Rtc(Wire);
 RtcDateTime now = Rtc.GetDateTime();
 RtcDateTime compiled; // Time at which the program is compile
 
+// Declare dynamic array for probe IDs
 struct ProbeData {
   float volume;
   float ullage;
@@ -36,7 +37,9 @@ struct ProbeData {
   float product;
   float water;
 };
-static ProbeData probeData[sizeof(probeId)];
+
+std::vector<int> probeId;
+std::vector<ProbeData> probeData;
 
 /* Define Modbus registers
 const uint16_t modbusReg[] = {0x0036, 0x003C, 0x0034, 0x0030, 0x0032};
@@ -46,22 +49,20 @@ const size_t DATA_COUNT = sizeof(modbusReg) / sizeof(modbusReg[0]);
 float latitude, longitude;
 String latDir, longDir, altitude, speed;
 String device, seriaNo;
-// Declare dynamic array for probe IDs
-std::vector<int> probeId;
 // Create a string to hold the formatted MAC address
 static uint8_t mac[6];
 static char macStr[18];
 static char logString[300];
 static char monitorString[300];
 // GPRSS credentials
-char apn[10];
-char gprsUser[10];
-char gprsPass[10];
+const char* apn;
+const char* gprsUser;
+const char* gprsPass;
 // MQTT credentials
-const char* topic = "";
-const char* broker = "";
-const char* clientID = "";
-const char* brokerUser = "";
+const char* topic;
+const char* broker;
+const char* clientID;
+const char* brokerUser;
 
 void appendFile(fs::FS &fs, const char * path, const char * message);
 void writeFile(fs::FS &fs, const char * path, const char * message);
@@ -244,22 +245,23 @@ void loop() {
   }
 
   // readData(probeData);
-  probeData.volume = ModbusRTUClient.holdingRegisterRead<float>(4, 0x0036, BIGEND);
-  if (probeData.volume < 0) {
-    Serial.print("Failed to read volume: ");
-    Serial.println(ModbusRTUClient.lastError());
-  } else {
-    Serial.println("Volume: " + String(probeData.volume));
-  }
+  for(int i = 0; i < probeId.size(); i++){
+    probeData[i].volume = ModbusRTUClient.holdingRegisterRead<float>(4, 0x0036, BIGEND);
+    if (probeData[i].volume < 0) {
+      Serial.print("Failed to read volume: ");
+      Serial.println(ModbusRTUClient.lastError());
+    } else {
+      Serial.println("Volume: " + String(probeData[i].volume));
+    }
 
-  probeData.ullage = ModbusRTUClient.holdingRegisterRead<float>(4, 0x003C, BIGEND);
-  if (probeData.ullage < 0) {
-    Serial.print("Failed to read ullage: ");
-    Serial.println(ModbusRTUClient.lastError());
-  } else {
-    Serial.println("Ullage: " + String(probeData.ullage));
+    probeData[i].ullage = ModbusRTUClient.holdingRegisterRead<float>(4, 0x003C, BIGEND);
+    if (probeData[i].ullage < 0) {
+      Serial.print("Failed to read ullage: ");
+      Serial.println(ModbusRTUClient.lastError());
+    } else {
+      Serial.println("Ullage: " + String(probeData[i].ullage));
+    }
   }
-
   remotePush(now);
   localLog(now);
   delay(5000);
@@ -361,17 +363,16 @@ void remotePush(const RtcDateTime& dt){
   for(int i = 0; i < probeId.size(); i++){
     JsonObject measure = measures.createNestedObject();
     measure["Id"] = probeId[i];
-    measure["Volume"] = probeData.volume;
-    measure["Ullage"] = probeData.ullage;
-    measure["Temperature"] = probeData.temperature;
-    measure["ProductLevel"] = probeData.product;
-    measure["WaterLevel"] = probeData.water;
-
-    // Serialize JSON and publish
-    char buffer[512];
-    size_t n = serializeJson(data, buffer);
-    mqtt.publish(topic, buffer, n);
+    measure["Volume"] = probeData[i].volume;
+    measure["Ullage"] = probeData[i].ullage;
+    measure["Temperature"] = probeData[i].temperature;
+    measure["ProductLevel"] = probeData[i].product;
+    measure["WaterLevel"] = probeData[i].water;
   }
+  // Serialize JSON and publish
+  char buffer[512];
+  size_t n = serializeJson(data, buffer);
+  mqtt.publish(topic, buffer, n);
 }
 
 void localLog(const RtcDateTime& dt){
@@ -391,8 +392,8 @@ void localLog(const RtcDateTime& dt){
             dt.Second());
 
   snprintf(logString, sizeof(logString), "%s;%s;%f;%f;%s;%s;%.1f;%.1f;%.1f;%.1f;%.1f\n",
-           dateString, timeString, latitude, longitude, speed, altitude, probeData.volume,
-           probeData.ullage, probeData.temperature, probeData.product, probeData.water);
+           dateString, timeString, latitude, longitude, speed, altitude, probeData[0].volume,
+           probeData[0].ullage, probeData[0].temperature, probeData[0].product, probeData[0].water);
   appendFile(SD, "/log.csv", logString);
 }
 
@@ -414,17 +415,11 @@ void getNetworkConfig(){
   file.close();
 
   JsonObject networkConfig = config["NetworkConfiguration"];
-
-  const char* tempApn = networkConfig["Apn"];
-  if (tempApn != nullptr) {
-    // Copy with a max size limit to avoid overflow
-    strcpy(apn, tempApn);
-    Serial.println(apn);
-  }
-  topic = networkConfig["Topic"].as<const char*>();
-  broker = networkConfig["Broker"].as<const char*>();
-  clientID = networkConfig["ClientId"].as<const char*>();
-  brokerUser = networkConfig["BrokerUser"].as<const char*>();
+  apn = networkConfig["Apn"].as<const char*>(); Serial.println(apn);
+  topic = networkConfig["Topic"].as<const char*>(); Serial.println(topic);
+  broker = networkConfig["Broker"].as<const char*>(); Serial.println(broker);
+  clientID = networkConfig["ClientId"].as<const char*>(); Serial.println(clientID);
+  brokerUser = networkConfig["BrokerUser"].as<const char*>(); Serial.println(brokerUser);
 }
 
 void getTankConfig(){
@@ -444,14 +439,14 @@ void getTankConfig(){
   }
   file.close();
 
-  int i = 0;
   // Access the Probe Configuration array
   JsonArray tanks = config["TankConfiguration"];
+  probeId.reserve(tanks.size());
+  probeData.reserve(tanks.size());
   for(JsonObject tank : tanks){
-    probeId[i] = tank["Id"];
-    String device = tank["Device"];
-    String serialNo = tank["SerialNo"];
-    i++;
+    probeId.push_back(tank["Id"].as<int>()); Serial.println(probeId.back());
+    String device = tank["Device"]; Serial.println(device);
+    String serialNo = tank["SerialNo"]; Serial.println(serialNo);
   }
 }
 
