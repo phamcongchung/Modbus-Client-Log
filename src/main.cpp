@@ -26,7 +26,7 @@ TinyGsm modem(SerialAT);
 TinyGsmClient client(modem);
 PubSubClient mqtt(client);
 RtcDS3231<TwoWire> Rtc(Wire);  
-RtcDateTime now = Rtc.GetDateTime();
+RtcDateTime now;
 RtcDateTime compiled; // Time at which the program is compile
 
 // Declare dynamic array for probe IDs
@@ -90,6 +90,7 @@ void setup() {
           mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
   // Print the MAC address
   Serial.printf("ESP32 MAC Address: %s\n", macStr);
+  Serial.println("");
   delay(1000);
 
   // Initialize the microSD card
@@ -117,6 +118,7 @@ void setup() {
   // Check SD card size
   uint64_t cardSize = SD.cardSize() / (1024 * 1024);
   Serial.printf("SD Card Size: %lluMB\n", cardSize);
+  Serial.println("");
   delay(500);
 
   getNetworkConfig();
@@ -150,7 +152,7 @@ void setup() {
   Serial.print(__DATE__);
   Serial.println(__TIME__);
   delay(500);
-
+  
   // Initialize the Modbus RTU client
   if (!ModbusRTUClient.begin(9600)) {
     Serial.println("Failed to start Modbus RTU Client!");
@@ -166,7 +168,7 @@ void setup() {
   Rtc.Enable32kHzPin(false);
   Rtc.SetSquareWavePin(DS3231SquareWavePin_ModeNone);
 
-  // If the log.txt file doesn't exist
+  // If the log.csv file doesn't exist
   // Create a file on the SD card and write the data labels
   File file = SD.open("/log.csv");
   if(!file) {
@@ -184,13 +186,12 @@ void setup() {
   // Initialize MQTT broker
   mqtt.setServer(broker, 1883);
   mqtt.setCallback(mqttCallback);
+  delay(1000);
 
   Serial.println("FAFNIR TANK LEVEL");
 }
 
 void loop() {
-  mqtt.loop();
-
   modem.sendAT("+CGPSINFO");
   if (modem.waitResponse(10000L, "+CGPSINFO:") == 1) {
     String gpsData = modem.stream.readStringUntil('\n');
@@ -245,24 +246,6 @@ void loop() {
   }
 
   readData();
-  /*for(int i = 0; i < probeId.size(); i++){
-    probeData[i].volume = ModbusRTUClient.holdingRegisterRead<float>(4, 0x0036, BIGEND);
-    if (probeData[i].volume < 0) {
-      Serial.print("Failed to read volume: ");
-      Serial.println(ModbusRTUClient.lastError());
-    } else {
-      Serial.println("Volume: " + String(probeData[i].volume));
-    }
-
-    probeData[i].ullage = ModbusRTUClient.holdingRegisterRead<float>(4, 0x003C, BIGEND);
-    if (probeData[i].ullage < 0) {
-      Serial.print("Failed to read ullage: ");
-      Serial.println(ModbusRTUClient.lastError());
-    } else {
-      Serial.println("Ullage: " + String(probeData[i].ullage));
-    }
-  }
-  */
   remotePush(now);
   localLog(now);
   delay(5000);
@@ -307,17 +290,17 @@ float convertToDecimalDegrees(String coord, String direction) {
 }
 
 void readData() {
-  for (size_t i = 0; i < probeData.size(); ++i) {
+  for (size_t i = 0; i < probeId.size(); ++i) {
     float* dataPointers[] = {&probeData[i].volume, &probeData[i].ullage, 
                              &probeData[i].temperature, &probeData[i].product, 
                              &probeData[i].water};
     
-    for (size_t i = 0; i < DATA_COUNT; ++i) {
-      *dataPointers[i] = ModbusRTUClient.holdingRegisterRead<float>(4, modbusReg[i], BIGEND);
+    for (size_t j = 0; j < 5; ++j) {
+      *dataPointers[j] = ModbusRTUClient.holdingRegisterRead<float>(probeId[i], modbusReg[j], BIGEND);
 
-      if (*dataPointers[i] < 0) {
+      if (*dataPointers[j] < 0) {
         Serial.print("Failed to read ");
-        Serial.print(i == 0 ? "volume" : (i == 1 ? "ullage" : (i == 2 ? "temperature" : (i == 3 ? "product" : "water"))));
+        Serial.print(j == 0 ? "volume" : (j == 1 ? "ullage" : (j == 2 ? "temperature" : (j == 3 ? "product" : "water"))));
         Serial.print(" for probe ID: ");
         Serial.println(probeId[i]);
         Serial.println(ModbusRTUClient.lastError());
@@ -331,12 +314,14 @@ void readData() {
     Serial.print("Product: "); Serial.println(probeData[i].product);
     Serial.print("Water: "); Serial.println(probeData[i].water);
   }
+  delay(500);
 }
 
 void remotePush(const RtcDateTime& dt){
   if(!mqtt.connected()){
     mqttReconnect();
   }
+  mqtt.loop();
 
   char dateString[20];
   char timeString[20];
@@ -356,7 +341,7 @@ void remotePush(const RtcDateTime& dt){
   char dateTimeString[40];
   snprintf(dateTimeString, sizeof(dateTimeString), "%s %s", dateString, timeString);
 
-  StaticJsonDocument<512> data;
+  StaticJsonDocument<1024> data;
   data["Device"] = macStr;
   data["Date/Time"] = dateTimeString;
 
@@ -509,7 +494,7 @@ void writeFile(fs::FS &fs, const char * path, const char * message) {
 
 void appendFile(fs::FS &fs, const char * path, const char * message){
   Serial.printf("Appending to file: %s\n", path);
-
+  
   File file = fs.open(path, FILE_APPEND);
   if(!file){
     Serial.println("File does not exist, creating file...");
