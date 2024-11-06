@@ -5,10 +5,8 @@
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include <RtcDS3231.h>
-#include <iostream>
 #include <vector>
 #include <Wire.h>
-#include <string>
 #include <SPI.h>
 #include <FS.h>
 #include <SD.h>
@@ -53,7 +51,6 @@ String device, seriaNo;
 static uint8_t mac[6];
 static char macStr[18];
 static char logString[300];
-static char monitorString[300];
 // GPRSS credentials
 const char* apn;
 const char* gprsUser;
@@ -126,7 +123,7 @@ void setup() {
   delay(1000);
   
   Serial.println("Initializing modem...");
-  modem.restart();
+  // modem.restart();
   
   Serial.print("Connecting to APN: ");
   Serial.println(apn);
@@ -185,6 +182,7 @@ void setup() {
 
   // Initialize MQTT broker
   mqtt.setServer(broker, 1883);
+  mqtt.setBufferSize(1024);
   mqtt.setCallback(mqttCallback);
   delay(1000);
 
@@ -247,7 +245,7 @@ void loop() {
 
   readData();
   remotePush(now);
-  localLog(now);
+  // localLog(now);
   delay(5000);
 }
 
@@ -314,7 +312,7 @@ void readData() {
     Serial.print("Product: "); Serial.println(probeData[i].product);
     Serial.print("Water: "); Serial.println(probeData[i].water);
   }
-  delay(500);
+  delay(1000);
 }
 
 void remotePush(const RtcDateTime& dt){
@@ -362,7 +360,7 @@ void remotePush(const RtcDateTime& dt){
     measure["WaterLevel"] = probeData[i].water;
   }
   // Serialize JSON and publish
-  char buffer[512];
+  char buffer[1024];
   size_t n = serializeJson(data, buffer);
   mqtt.publish(topic, buffer, n);
 }
