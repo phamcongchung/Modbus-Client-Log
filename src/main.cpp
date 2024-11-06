@@ -52,14 +52,14 @@ static uint8_t mac[6];
 static char macStr[18];
 static char logString[300];
 // GPRSS credentials
-const char* apn;
-const char* gprsUser;
-const char* gprsPass;
+String apn;
+String gprsUser;
+String gprsPass;
 // MQTT credentials
-const char* topic;
-const char* broker;
-const char* clientID;
-const char* brokerUser;
+String topic;
+String broker;
+String clientID;
+String brokerUser;
 
 void appendFile(fs::FS &fs, const char * path, const char * message);
 void writeFile(fs::FS &fs, const char * path, const char * message);
@@ -127,7 +127,7 @@ void setup() {
   
   Serial.print("Connecting to APN: ");
   Serial.println(apn);
-  if (!modem.gprsConnect(apn, gprsUser, gprsPass)) {
+  if (!modem.gprsConnect(apn.c_str(), gprsUser.c_str(), gprsPass.c_str())) {
     Serial.println("Fail to connect to LTE network");
     ESP.restart();
   }
@@ -181,7 +181,7 @@ void setup() {
   file.close();
 
   // Initialize MQTT broker
-  mqtt.setServer(broker, 1883);
+  mqtt.setServer(broker.c_str(), 1883);
   mqtt.setBufferSize(1024);
   mqtt.setCallback(mqttCallback);
   delay(1000);
@@ -245,7 +245,7 @@ void loop() {
 
   readData();
   remotePush(now);
-  // localLog(now);
+  localLog(now);
   delay(5000);
 }
 
@@ -362,7 +362,7 @@ void remotePush(const RtcDateTime& dt){
   // Serialize JSON and publish
   char buffer[1024];
   size_t n = serializeJson(data, buffer);
-  mqtt.publish(topic, buffer, n);
+  mqtt.publish(topic.c_str(), buffer, n);
 }
 
 void localLog(const RtcDateTime& dt){
@@ -404,14 +404,14 @@ void getNetworkConfig(){
   }
   file.close();
 
-  JsonObject networkConfig = config["NetworkConfiguration"];
-  apn = networkConfig["Apn"].as<const char*>(); Serial.println(apn);
-  gprsUser = networkConfig["GprsUser"].as<const char*>(); Serial.println(gprsUser);
-  gprsPass = networkConfig["GprsPass"].as<const char*>(); Serial.println(gprsPass);
-  topic = networkConfig["Topic"].as<const char*>(); Serial.println(topic);
-  broker = networkConfig["Broker"].as<const char*>(); Serial.println(broker);
-  clientID = networkConfig["ClientId"].as<const char*>(); Serial.println(clientID);
-  brokerUser = networkConfig["BrokerUser"].as<const char*>(); Serial.println(brokerUser);
+  // Extract Network Configuration as String
+  apn = config["NetworkConfiguration"]["Apn"].as<String>();
+  gprsUser = config["NetworkConfiguration"]["GprsUser"].as<String>();
+  gprsPass = config["NetworkConfiguration"]["GprsPass"].as<String>();
+  topic = config["NetworkConfiguration"]["Topic"].as<String>();
+  broker = config["NetworkConfiguration"]["Broker"].as<String>();
+  clientID = config["NetworkConfiguration"]["ClientId"].as<String>();
+  brokerUser = config["NetworkConfiguration"]["BrokerUser"].as<String>();
 }
 
 void getTankConfig(){
@@ -447,10 +447,10 @@ void mqttReconnect() {
   while (!mqtt.connected()) {
     Serial.print("Attempting MQTT connection...");
     // Attempt to connect
-    if (mqtt.connect(clientID)) {
+    if (mqtt.connect(clientID.c_str())) {
       Serial.println("Connected");
       // Subscribe
-      mqtt.subscribe(topic);
+      mqtt.subscribe(topic.c_str());
     } else {
       Serial.print("Failed, rc=");
       Serial.print(mqtt.state());
