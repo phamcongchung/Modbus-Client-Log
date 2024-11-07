@@ -15,7 +15,6 @@
 #define SIM_RXD       32
 #define SIM_TXD       33
 #define SIM_BAUD      115200
-#define PUSH_INTERVAL 60000
 
 #include <TinyGsmClient.h>
 
@@ -24,10 +23,9 @@ TinyGsm modem(SerialAT);
 TinyGsmClient client(modem);
 PubSubClient mqtt(client);
 RtcDS3231<TwoWire> Rtc(Wire);  
-RtcDateTime now;
-RtcDateTime compiled; // Time at which the program is compile
+RtcDateTime now, compiled;
 
-// Declare dynamic array for probe IDs
+// Declare dynamic array for probe IDs and data
 struct ProbeData {
   float volume;
   float ullage;
@@ -35,14 +33,9 @@ struct ProbeData {
   float product;
   float water;
 };
-
 std::vector<int> probeId;
+std::vector<uint16_t> modbusReg;
 std::vector<ProbeData> probeData;
-
-//Define Modbus registers
-const uint16_t modbusReg[] = {0x0036, 0x003C, 0x0034, 0x0030, 0x0032};
-const size_t DATA_COUNT = 5;
-
 // GPS data
 float latitude, longitude;
 String latDir, longDir, altitude, speed;
@@ -60,6 +53,10 @@ String topic;
 String broker;
 String clientID;
 String brokerUser;
+String brokerPass;
+uint16_t port;
+// Stores the last time an action was triggered
+unsigned long previousMillis = 0;
 
 void appendFile(fs::FS &fs, const char * path, const char * message);
 void writeFile(fs::FS &fs, const char * path, const char * message);
@@ -67,12 +64,12 @@ void mqttCallback(char* topic, byte* message, unsigned int len);
 void remotePush(const RtcDateTime& dt);
 void localLog(const RtcDateTime& dt);
 void readData();
-void parseGPS(String gpsData);
+void parseGPS(const String& gpsData);
 void getNetworkConfig();
 void getTankConfig();
 void mqttReconnect();
 float convertToDecimalDegrees(String coord, String direction);
-String getValue(String data, char separator, int index);
+String getValue(const String& data, char separator, int index);
 
 void setup() {
   // Initialize serial communication
@@ -96,7 +93,6 @@ void setup() {
     return;
   }
   uint8_t cardType = SD.cardType();
-
   if(cardType == CARD_NONE){
     Serial.println("No SD card attached");
     return;
@@ -116,7 +112,6 @@ void setup() {
   uint64_t cardSize = SD.cardSize() / (1024 * 1024);
   Serial.printf("SD Card Size: %lluMB\n", cardSize);
   Serial.println("");
-  delay(500);
 
   getNetworkConfig();
   getTankConfig();
@@ -249,68 +244,22 @@ void loop() {
   delay(5000);
 }
 
-void parseGPS(String gpsData){
-  String rawLat = getValue(gpsData, ',', 0); latDir = getValue(gpsData, ',', 1);
-  String rawLong = getValue(gpsData, ',', 2); longDir = getValue(gpsData, ',', 3);
-  altitude = getValue(gpsData, ',', 6); speed = getValue(gpsData, ',', 7);
-  latitude = convertToDecimalDegrees(rawLat, latDir);
-  longitude = convertToDecimalDegrees(rawLong, longDir);
-}
-
-String getValue(String data, char separator, int index) {
-  int found = 0; // Found separator
-  int strIndex[] = {0, -1}; // Array to hold the start and end index of the value
-  int maxIndex = data.length() - 1; // Get the maximum index of the string
-
-  // Loop ends when it reaches the end of the string and there are more separators than indices
-  for (int i = 0; i <= maxIndex && found <= index; i++) {
-    if (data.charAt(i) == separator || i == maxIndex) {
-      found++;
-      strIndex[0] = strIndex[1] + 1;
-      strIndex[1] = (i == maxIndex) ? i+1 : i;
-    }
-  }
-  return found > index ? data.substring(strIndex[0], strIndex[1]) : "";
-}
-
-float convertToDecimalDegrees(String coord, String direction) {
-  // First two or three digits are degrees
-  int degrees = coord.substring(0, coord.indexOf('.')).toInt() / 100;
-  // Remaining digits are minutes
-  float minutes = coord.substring(coord.indexOf('.') - 2).toFloat();
-  // Convert to decimal degrees
-  float decimalDegrees = degrees + (minutes / 60);
-  // Apply direction (N/S or E/W)
-  if (direction == "S" || direction == "W") {
-    decimalDegrees = -decimalDegrees;  // South and West are negative
-  }
-  return decimalDegrees;
-}
-
 void readData() {
   for (size_t i = 0; i < probeId.size(); ++i) {
     float* dataPointers[] = {&probeData[i].volume, &probeData[i].ullage, 
                              &probeData[i].temperature, &probeData[i].product, 
                              &probeData[i].water};
+    const char* labels[] = {"Volume", "Ullage", "Temperature", "Product", "Water"};
     
     for (size_t j = 0; j < 5; ++j) {
       *dataPointers[j] = ModbusRTUClient.holdingRegisterRead<float>(probeId[i], modbusReg[j], BIGEND);
 
       if (*dataPointers[j] < 0) {
-        Serial.print("Failed to read ");
-        Serial.print(j == 0 ? "volume" : (j == 1 ? "ullage" : (j == 2 ? "temperature" : (j == 3 ? "product" : "water"))));
-        Serial.print(" for probe ID: ");
-        Serial.println(probeId[i]);
-        Serial.println(ModbusRTUClient.lastError());
+        Serial.printf("Failed to read %s for probe ID: %d\r\nError: %d\r\n", labels[j], probeId[i], ModbusRTUClient.lastError());
+      } else {
+        Serial.printf("%s: %.2f\r\n", labels[j], *dataPointers[j]);
       }
     }
-    // Optionally print data after reading
-    Serial.print("Probe ID: "); Serial.println(probeId[i]);
-    Serial.print("Volume: "); Serial.println(probeData[i].volume);
-    Serial.print("Ullage: "); Serial.println(probeData[i].ullage);
-    Serial.print("Temperature: "); Serial.println(probeData[i].temperature);
-    Serial.print("Product: "); Serial.println(probeData[i].product);
-    Serial.print("Water: "); Serial.println(probeData[i].water);
   }
   delay(1000);
 }
@@ -346,8 +295,8 @@ void remotePush(const RtcDateTime& dt){
   JsonObject gps = data.createNestedObject("Gps");
   gps["Latitude"] = latitude;
   gps["Longitude"] = longitude;
-  gps["Altitude"] = altitude;
-  gps["Speed"] = speed;
+  gps["Altitude"] = altitude.toFloat();
+  gps["Speed"] = speed.toFloat();
 
   JsonArray measures = data.createNestedArray("Measure");
   for(int i = 0; i < probeId.size(); i++){
@@ -412,6 +361,9 @@ void getNetworkConfig(){
   broker = config["NetworkConfiguration"]["Broker"].as<String>();
   clientID = config["NetworkConfiguration"]["ClientId"].as<String>();
   brokerUser = config["NetworkConfiguration"]["BrokerUser"].as<String>();
+  brokerPass = config["NetworkConfiguration"]["BrokerPass"].as<String>();
+  port = config["NetworkConfiguration"]["Port"].as<uint16_t>();
+  Serial.println(port);
 }
 
 void getTankConfig(){
@@ -436,10 +388,51 @@ void getTankConfig(){
   probeId.reserve(tanks.size());
   probeData.reserve(tanks.size());
   for(JsonObject tank : tanks){
+    JsonArray modbusRegs = tank["ModbusRegister"];
+    modbusReg.reserve(modbusRegs.size());
+    for(JsonVariant regValue : modbusRegs){
+      modbusReg.push_back(regValue.as<uint16_t>());
+      Serial.print(modbusReg.back()); Serial.print(" ");
+    }
+    Serial.println("");
     probeId.push_back(tank["Id"].as<int>()); Serial.println(probeId.back());
     String device = tank["Device"]; Serial.println(device);
     String serialNo = tank["SerialNo"]; Serial.println(serialNo);
   }
+}
+
+void parseGPS(const String& gpsData){
+  String rawLat = getValue(gpsData, ',', 0); latDir = getValue(gpsData, ',', 1);
+  String rawLong = getValue(gpsData, ',', 2); longDir = getValue(gpsData, ',', 3);
+  altitude = getValue(gpsData, ',', 6); speed = getValue(gpsData, ',', 7);
+  latitude = convertToDecimalDegrees(rawLat, latDir);
+  longitude = convertToDecimalDegrees(rawLong, longDir);
+}
+
+String getValue(const String& data, char separator, int index) {
+  int startIndex = 0;
+  for (int i = 0; i <= index; i++) {
+    int endIndex = data.indexOf(separator, startIndex);
+    if (i == index) {
+      return (endIndex == -1) ? data.substring(startIndex) : data.substring(startIndex, endIndex);
+    }
+    startIndex = endIndex + 1;
+  }
+  return "";
+}
+
+float convertToDecimalDegrees(String coord, String direction) {
+  // First two or three digits are degrees
+  int degrees = coord.substring(0, coord.indexOf('.')).toInt() / 100;
+  // Remaining digits are minutes
+  float minutes = coord.substring(coord.indexOf('.') - 2).toFloat();
+  // Convert to decimal degrees
+  float decimalDegrees = degrees + (minutes / 60);
+  // Apply direction (N/S or E/W)
+  if (direction == "S" || direction == "W") {
+    decimalDegrees = -decimalDegrees;  // South and West are negative
+  }
+  return decimalDegrees;
 }
 
 void mqttReconnect() {
@@ -447,7 +440,7 @@ void mqttReconnect() {
   while (!mqtt.connected()) {
     Serial.print("Attempting MQTT connection...");
     // Attempt to connect
-    if (mqtt.connect(clientID.c_str())) {
+    if (mqtt.connect(clientID.c_str(), brokerUser.c_str(), brokerPass.c_str())) {
       Serial.println("Connected");
       // Subscribe
       mqtt.subscribe(topic.c_str());
@@ -475,7 +468,7 @@ void mqttCallback(char* topic, byte* message, unsigned int len) {
 }
 
 void writeFile(fs::FS &fs, const char * path, const char * message) {
-  Serial.printf("Writing file: %s\n", path);
+  Serial.printf("Writing file: %s\r\n", path);
 
   File file = fs.open(path, FILE_WRITE);
   if(!file) {
@@ -491,7 +484,7 @@ void writeFile(fs::FS &fs, const char * path, const char * message) {
 }
 
 void appendFile(fs::FS &fs, const char * path, const char * message){
-  Serial.printf("Appending to file: %s\n", path);
+  Serial.printf("Appending to file: %s\r\n", path);
   
   File file = fs.open(path, FILE_APPEND);
   if(!file){
