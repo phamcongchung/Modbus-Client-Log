@@ -1,4 +1,4 @@
- ESP32 | RS485 Module | SD Card Module | RTC DS3231 | NEO 6M V2 |
+ ESP32 | RS485 Module | SD Card Module | RTC DS3231 |  SIM7600  |
 =================================================================
   RX2  |      RXD     |                |            |           | 
   TX2  |      TXD     |                |            |           |
