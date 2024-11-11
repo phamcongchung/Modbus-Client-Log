@@ -42,7 +42,7 @@ String latDir, longDir, altitude, speed;
 String device, seriaNo;
 // Create a string to hold the formatted MAC address
 static uint8_t mac[6];
-static char macStr[18];
+static char macAdr[18];
 static char logString[300];
 // GPRSS credentials
 String apn;
@@ -51,7 +51,6 @@ String gprsPass;
 // MQTT credentials
 String topic;
 String broker;
-String clientID;
 String brokerUser;
 String brokerPass;
 uint16_t port;
@@ -80,11 +79,10 @@ void setup() {
   // Retrieve MAC address
   esp_efuse_mac_get_default(mac);
   // Format the MAC address into the string
-  sprintf(macStr, "%02X:%02X:%02X:%02X:%02X:%02X",
+  sprintf(macAdr, "%02X:%02X:%02X:%02X:%02X:%02X",
           mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
   // Print the MAC address
-  Serial.printf("ESP32 MAC Address: %s\n", macStr);
-  Serial.println("");
+  Serial.printf("ESP32 MAC Address: %s\r\n", macAdr);
   delay(1000);
 
   // Initialize the microSD card
@@ -289,7 +287,7 @@ void remotePush(const RtcDateTime& dt){
   snprintf(dateTimeString, sizeof(dateTimeString), "%s %s", dateString, timeString);
 
   StaticJsonDocument<1024> data;
-  data["Device"] = macStr;
+  data["Device"] = macAdr;
   data["Date/Time"] = dateTimeString;
 
   JsonObject gps = data.createNestedObject("Gps");
@@ -359,11 +357,9 @@ void getNetworkConfig(){
   gprsPass = config["NetworkConfiguration"]["GprsPass"].as<String>();
   topic = config["NetworkConfiguration"]["Topic"].as<String>();
   broker = config["NetworkConfiguration"]["Broker"].as<String>();
-  clientID = config["NetworkConfiguration"]["ClientId"].as<String>();
   brokerUser = config["NetworkConfiguration"]["BrokerUser"].as<String>();
   brokerPass = config["NetworkConfiguration"]["BrokerPass"].as<String>();
   port = config["NetworkConfiguration"]["Port"].as<uint16_t>();
-  Serial.println(port);
 }
 
 void getTankConfig(){
@@ -440,7 +436,7 @@ void mqttReconnect() {
   while (!mqtt.connected()) {
     Serial.print("Attempting MQTT connection...");
     // Attempt to connect
-    if (mqtt.connect(clientID.c_str(), brokerUser.c_str(), brokerPass.c_str())) {
+    if (mqtt.connect(macAdr, brokerUser.c_str(), brokerPass.c_str())) {
       Serial.println("Connected");
       // Subscribe
       mqtt.subscribe(topic.c_str());
