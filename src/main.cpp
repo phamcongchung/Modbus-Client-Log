@@ -22,10 +22,15 @@ HardwareSerial SerialAT(1);
 TinyGsm modem(SerialAT);
 TinyGsmClient client(modem);
 PubSubClient mqtt(client);
+// RTC and mutex
 RtcDS3231<TwoWire> Rtc(Wire);  
 RtcDateTime now, compiled;
+SemaphoreHandle_t timeMutex;
 
-// Declare dynamic array for probe IDs and data
+static const BaseType_t pro_cpu = 0;
+static const BaseType_t app_cpu = 1;
+
+// Dynamic array for probe IDs and data
 struct ProbeData {
   float volume;
   float ullage;
@@ -57,24 +62,48 @@ uint16_t port;
 // Stores the last time an action was triggered
 unsigned long previousMillis = 0;
 
+// Task handles
+static TaskHandle_t lteTaskHandle = NULL;
+static TaskHandle_t gpsTaskHandle = NULL;
+static TaskHandle_t modbusTaskHandle = NULL;
+static TaskHandle_t rtcTaskHandle = NULL;
+static TaskHandle_t pushTaskHandle = NULL;
+static TaskHandle_t logTaskHandle = NULL;
+
+// Task delay times
+const TickType_t lteDelay = pdMS_TO_TICKS(5000);
+const TickType_t gpsDelay = pdMS_TO_TICKS(1000);
+const TickType_t modbusDelay = pdMS_TO_TICKS(1000);
+const TickType_t rtcDelay = pdMS_TO_TICKS(60000);
+const TickType_t logDelay = pdMS_TO_TICKS(5000);
+const TickType_t pushDelay = pdMS_TO_TICKS(1000);
+
+// Task prototypes
+void connectLTE(void *pvParameters);
+void readGPS(void *pvParameters);
+void readModbus(void *pvParameters);
+void checkRTC(void *pvParameters);
+void remotePush(void *pvParameters);
+void localLog(void *pvParameters);
+
+//Function declaration
 void appendFile(fs::FS &fs, const char * path, const char * message);
 void writeFile(fs::FS &fs, const char * path, const char * message);
 void mqttCallback(char* topic, byte* message, unsigned int len);
-void remotePush(const RtcDateTime& dt);
-void localLog(const RtcDateTime& dt);
-void readData();
-void parseGPS(const String& gpsData);
 void getNetworkConfig();
 void getTankConfig();
 void mqttReconnect();
-float convertToDecimalDegrees(String coord, String direction);
+float coordConvert(String coord, String direction);
 String getValue(const String& data, char separator, int index);
 
 void setup() {
+  // Initialize mutex
+  timeMutex = xSemaphoreCreateMutex();
+
   // Initialize serial communication
   Serial.begin(115200);
   SerialAT.begin(115200, SERIAL_8N1, SIM_RXD, SIM_TXD);
-  delay(3000);
+  vTaskDelay(pdMS_TO_TICKS(3000));
 
   // Retrieve MAC address
   esp_efuse_mac_get_default(mac);
@@ -113,7 +142,7 @@ void setup() {
 
   getNetworkConfig();
   getTankConfig();
-  delay(1000);
+  vTaskDelay(pdMS_TO_TICKS(1000));
   
   Serial.println("Initializing modem...");
   // modem.restart();
@@ -141,14 +170,15 @@ void setup() {
   Serial.print("Compiled: ");
   Serial.print(__DATE__);
   Serial.println(__TIME__);
-  delay(500);
+  vTaskDelay(pdMS_TO_TICKS(500));
   
   // Initialize the Modbus RTU client
   if (!ModbusRTUClient.begin(9600)) {
     Serial.println("Failed to start Modbus RTU Client!");
-    while (1);
+    Serial.println("Trying to reconnect");
+    ModbusRTUClient.begin(9600);
   }
-  delay(500);
+  vTaskDelay(pdMS_TO_TICKS(1000));
   
   // Initialize DS3231 communication
   Rtc.Begin();
@@ -157,6 +187,20 @@ void setup() {
   // Disable unnecessary functions of the RTC DS3231
   Rtc.Enable32kHzPin(false);
   Rtc.SetSquareWavePin(DS3231SquareWavePin_ModeNone);
+  // Validate RTC date and time
+  if (!Rtc.IsDateTimeValid())
+  {
+    if ((Rtc.LastError()) != 0)
+    {
+      Serial.print("RTC communication error = ");
+      Serial.println(Rtc.LastError());
+    }
+    else
+    {
+      Serial.println("RTC lost confidence in the DateTime!");
+      Rtc.SetDateTime(compiled);
+    }
+  }
 
   // If the log.csv file doesn't exist
   // Create a file on the SD card and write the data labels
@@ -177,161 +221,186 @@ void setup() {
   mqtt.setServer(broker.c_str(), 1883);
   mqtt.setBufferSize(1024);
   mqtt.setCallback(mqttCallback);
-  delay(1000);
+  vTaskDelay(pdMS_TO_TICKS(1000));
 
   Serial.println("FAFNIR TANK LEVEL");
+
+  // Create FreeRTOS tasks
+  xTaskCreatePinnedToCore(connectLTE, "Connect LTE", 2048, NULL, 0, &lteTaskHandle, pro_cpu);
+  xTaskCreatePinnedToCore(readGPS, "Read GPS", 2048, NULL, 1, &gpsTaskHandle, pro_cpu);
+  xTaskCreatePinnedToCore(readModbus, "Read Modbus", 1280, NULL, 2, &modbusTaskHandle, pro_cpu);
+  xTaskCreatePinnedToCore(checkRTC, "Check RTC", 2048, NULL, 0, &rtcTaskHandle, app_cpu);
+  xTaskCreatePinnedToCore(localLog, "Log to SD", 3072, NULL, 1, &logTaskHandle, app_cpu);
+  xTaskCreatePinnedToCore(remotePush, "Connect MQTT", 2048, NULL, 2, &pushTaskHandle, app_cpu);
+
+  vTaskDelete(NULL);
 }
 
 void loop() {
-  modem.sendAT("+CGPSINFO");
-  if (modem.waitResponse(10000L, "+CGPSINFO:") == 1) {
-    String gpsData = modem.stream.readStringUntil('\n');
-
-    // Check if the data contains invalid GPS values
-    if (gpsData.indexOf(",,,,,,,,") != -1) {
-      Serial.println("Error: GPS data is invalid (no fix or no data available).");
-    } else {
-      Serial.println("Raw GPS Data: " + gpsData);
-      // Call a function to parse the GPS data if valid
-      parseGPS(gpsData);
-    }
-    delay(5000);
-  } else {
-    Serial.println("GPS data not available or invalid.");
-  }
   
-  // Validate RTC date and time
-  if (!Rtc.IsDateTimeValid())
-  {
-    if ((Rtc.LastError()) != 0)
-    {
-      Serial.print("RTC communication error = ");
-      Serial.println(Rtc.LastError());
-    }
-    else
-    {
-      Serial.println("RTC lost confidence in the DateTime!");
-      Rtc.SetDateTime(compiled);
-    }
-  }
-  RtcDateTime now = Rtc.GetDateTime();
-  // Ensure the RTC is running
-  if (!Rtc.GetIsRunning())
-  {
-    Serial.println("RTC was not actively running, starting now");
-    Rtc.SetIsRunning(true);
-  }
-  // Compare RTC time with compile time
-  if (now < compiled)
-  {
-    Serial.println("RTC is older than compile time! (Updating DateTime)");
-    Rtc.SetDateTime(compiled);
-  }
-  else if (now > compiled)
-  {
-    Serial.println("RTC is newer than compiled time! (as expected)");
-  }
-  else if (now == compiled)
-  {
-    Serial.println("RTC is the same as compile time! (not expected but acceptable)");
-  }
-
-  readData();
-  remotePush(now);
-  localLog(now);
-  delay(5000);
 }
 
-void readData() {
-  for (size_t i = 0; i < probeId.size(); ++i) {
-    float* dataPointers[] = {&probeData[i].volume, &probeData[i].ullage, 
-                             &probeData[i].temperature, &probeData[i].product, 
-                             &probeData[i].water};
-    const char* labels[] = {"Volume", "Ullage", "Temperature", "Product", "Water"};
-    
-    for (size_t j = 0; j < 5; ++j) {
-      *dataPointers[j] = ModbusRTUClient.holdingRegisterRead<float>(probeId[i], modbusReg[j], BIGEND);
+void readGPS(void *pvParameters){
+  while(1){
+    modem.sendAT("+CGPSINFO");
+    if (modem.waitResponse(10000L, "+CGPSINFO:") == 1) {
+      String gpsData = modem.stream.readStringUntil('\n');
 
-      if (*dataPointers[j] < 0) {
-        Serial.printf("Failed to read %s for probe ID: %d\r\nError: %d\r\n", labels[j], probeId[i], ModbusRTUClient.lastError());
+      // Check if the data contains invalid GPS values
+      if (gpsData.indexOf(",,,,,,,,") != -1) {
+        Serial.println("Error: GPS data is invalid (no fix or no data available).");
       } else {
-        Serial.printf("%s: %.2f\r\n", labels[j], *dataPointers[j]);
+        Serial.println("Raw GPS Data: " + gpsData);
+        String rawLat = getValue(gpsData, ',', 0); latDir = getValue(gpsData, ',', 1);
+        String rawLong = getValue(gpsData, ',', 2); longDir = getValue(gpsData, ',', 3);
+        altitude = getValue(gpsData, ',', 6); speed = getValue(gpsData, ',', 7);
+        latitude = coordConvert(rawLat, latDir);
+        longitude = coordConvert(rawLong, longDir);
+      }
+      delay(5000);
+    } else {
+      Serial.println("GPS data not available or invalid.");
+    }
+    vTaskDelay(gpsDelay);
+  }
+}
+
+void readModbus(void *pvParameters) {
+  while(1){
+    for (size_t i = 0; i < probeId.size(); ++i) {
+      float* dataPointers[] = {&probeData[i].volume, &probeData[i].ullage, 
+                              &probeData[i].temperature, &probeData[i].product, 
+                              &probeData[i].water};
+      const char* labels[] = {"Volume", "Ullage", "Temperature", "Product", "Water"};
+      
+      for (size_t j = 0; j < 5; ++j) {
+        *dataPointers[j] = ModbusRTUClient.holdingRegisterRead<float>(probeId[i], modbusReg[j], BIGEND);
+
+        if (*dataPointers[j] < 0) {
+          Serial.printf("Failed to read %s for probe ID: %d\r\nError: %d\r\n", labels[j], probeId[i], ModbusRTUClient.lastError());
+        } else {
+          Serial.printf("%s: %.2f\r\n", labels[j], *dataPointers[j]);
+        }
       }
     }
+    vTaskDelay(modbusDelay);
   }
-  delay(1000);
 }
 
-void remotePush(const RtcDateTime& dt){
-  if(!mqtt.connected()){
-    mqttReconnect();
+void remotePush(void *pvParameters){
+  while(1){
+    if (xSemaphoreTake(timeMutex, portMAX_DELAY) == pdTRUE) {
+      if(!mqtt.connected()){
+        mqttReconnect();
+      }
+      mqtt.loop();
+
+      char dateString[20];
+      char timeString[20];
+      snprintf_P(dateString,
+                countof(dateString),
+                PSTR("%02u/%02u/%04u"),
+                now.Month(),
+                now.Day(),
+                now.Year());
+      snprintf_P(timeString,
+                countof(timeString),
+                PSTR("%02u:%02u:%02u"),
+                now.Hour(),
+                now.Minute(),
+                now.Second());
+      xSemaphoreGive(timeMutex);
+      // Combine date and time into a single string
+      char dateTimeString[40];
+      snprintf(dateTimeString, sizeof(dateTimeString), "%s %s", dateString, timeString);
+
+      StaticJsonDocument<1024> data;
+      data["Device"] = macAdr;
+      data["Date/Time"] = dateTimeString;
+
+      JsonObject gps = data.createNestedObject("Gps");
+      gps["Latitude"] = latitude;
+      gps["Longitude"] = longitude;
+      gps["Altitude"] = altitude.toFloat();
+      gps["Speed"] = speed.toFloat();
+
+      JsonArray measures = data.createNestedArray("Measure");
+      for(int i = 0; i < probeId.size(); i++){
+        JsonObject measure = measures.createNestedObject();
+        measure["Id"] = probeId[i];
+        measure["Volume"] = probeData[i].volume;
+        measure["Ullage"] = probeData[i].ullage;
+        measure["Temperature"] = probeData[i].temperature;
+        measure["ProductLevel"] = probeData[i].product;
+        measure["WaterLevel"] = probeData[i].water;
+      }
+      // Serialize JSON and publish
+      char buffer[1024];
+      size_t n = serializeJson(data, buffer);
+      mqtt.publish(topic.c_str(), buffer, n);
+
+    }
+    vTaskDelay(pushDelay);
   }
-  mqtt.loop();
-
-  char dateString[20];
-  char timeString[20];
-  snprintf_P(dateString,
-            countof(dateString),
-            PSTR("%02u/%02u/%04u"),
-            dt.Month(),
-            dt.Day(),
-            dt.Year());
-  snprintf_P(timeString,
-            countof(timeString),
-            PSTR("%02u:%02u:%02u"),
-            dt.Hour(),
-            dt.Minute(),
-            dt.Second());
-  // Combine date and time into a single string
-  char dateTimeString[40];
-  snprintf(dateTimeString, sizeof(dateTimeString), "%s %s", dateString, timeString);
-
-  StaticJsonDocument<1024> data;
-  data["Device"] = macAdr;
-  data["Date/Time"] = dateTimeString;
-
-  JsonObject gps = data.createNestedObject("Gps");
-  gps["Latitude"] = latitude;
-  gps["Longitude"] = longitude;
-  gps["Altitude"] = altitude.toFloat();
-  gps["Speed"] = speed.toFloat();
-
-  JsonArray measures = data.createNestedArray("Measure");
-  for(int i = 0; i < probeId.size(); i++){
-    JsonObject measure = measures.createNestedObject();
-    measure["Id"] = probeId[i];
-    measure["Volume"] = probeData[i].volume;
-    measure["Ullage"] = probeData[i].ullage;
-    measure["Temperature"] = probeData[i].temperature;
-    measure["ProductLevel"] = probeData[i].product;
-    measure["WaterLevel"] = probeData[i].water;
-  }
-  // Serialize JSON and publish
-  char buffer[1024];
-  size_t n = serializeJson(data, buffer);
-  mqtt.publish(topic.c_str(), buffer, n);
 }
 
-void localLog(const RtcDateTime& dt){
-  char dateString[20];
-  char timeString[20];
-  snprintf_P(dateString,
-            countof(dateString),
-            PSTR("%02u/%02u/%04u"),
-            dt.Month(),
-            dt.Day(),
-            dt.Year());
-  snprintf_P(timeString,
-            countof(timeString),
-            PSTR("%02u:%02u:%02u"),
-            dt.Hour(),
-            dt.Minute(),
-            dt.Second());
+void localLog(void *pvParameters){
+  while(1){
+    if (xSemaphoreTake(timeMutex, portMAX_DELAY) == pdTRUE) {
+      char dateString[20];
+      char timeString[20];
+      snprintf_P(dateString,
+                countof(dateString),
+                PSTR("%02u/%02u/%04u"),
+                now.Month(),
+                now.Day(),
+                now.Year());
+      snprintf_P(timeString,
+                countof(timeString),
+                PSTR("%02u:%02u:%02u"),
+                now.Hour(),
+                now.Minute(),
+                now.Second());
+      xSemaphoreGive(timeMutex);
 
-  snprintf(logString, sizeof(logString), "%s;%s;%f;%f;%s;%s;%.1f;%.1f;%.1f;%.1f;%.1f\n",
-           dateString, timeString, latitude, longitude, speed, altitude, probeData[0].volume,
-           probeData[0].ullage, probeData[0].temperature, probeData[0].product, probeData[0].water);
-  appendFile(SD, "/log.csv", logString);
+      snprintf(logString, sizeof(logString), "%s;%s;%f;%f;%s;%s;%.1f;%.1f;%.1f;%.1f;%.1f\n",
+              dateString, timeString, latitude, longitude, speed, altitude, probeData[0].volume,
+              probeData[0].ullage, probeData[0].temperature, probeData[0].product, probeData[0].water);
+      appendFile(SD, "/log.csv", logString);
+    }
+
+    vTaskDelay(logDelay);
+  }
+}
+
+void checkRTC(void *pvParameters){
+  while(1){
+    if (xSemaphoreTake(timeMutex, portMAX_DELAY) == pdTRUE) {
+      RtcDateTime now = Rtc.GetDateTime();
+      // Ensure the RTC is running
+      if (!Rtc.GetIsRunning())
+      {
+        Serial.println("RTC was not actively running, starting now");
+        Rtc.SetIsRunning(true);
+      }
+      // Compare RTC time with compile time
+      if (now < compiled)
+      {
+        Serial.println("RTC is older than compile time! (Updating DateTime)");
+        Rtc.SetDateTime(compiled);
+      }
+      else if (now > compiled)
+      {
+        Serial.println("RTC is newer than compiled time! (as expected)");
+      }
+      else if (now == compiled)
+      {
+        Serial.println("RTC is the same as compile time! (not expected but acceptable)");
+      }
+      xSemaphoreGive(timeMutex);
+    }
+    vTaskDelay(rtcDelay);
+  }
 }
 
 void getNetworkConfig(){
@@ -397,14 +466,6 @@ void getTankConfig(){
   }
 }
 
-void parseGPS(const String& gpsData){
-  String rawLat = getValue(gpsData, ',', 0); latDir = getValue(gpsData, ',', 1);
-  String rawLong = getValue(gpsData, ',', 2); longDir = getValue(gpsData, ',', 3);
-  altitude = getValue(gpsData, ',', 6); speed = getValue(gpsData, ',', 7);
-  latitude = convertToDecimalDegrees(rawLat, latDir);
-  longitude = convertToDecimalDegrees(rawLong, longDir);
-}
-
 String getValue(const String& data, char separator, int index) {
   int startIndex = 0;
   for (int i = 0; i <= index; i++) {
@@ -417,7 +478,7 @@ String getValue(const String& data, char separator, int index) {
   return "";
 }
 
-float convertToDecimalDegrees(String coord, String direction) {
+float coordConvert(String coord, String direction) {
   // First two or three digits are degrees
   int degrees = coord.substring(0, coord.indexOf('.')).toInt() / 100;
   // Remaining digits are minutes
