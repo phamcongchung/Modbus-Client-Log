@@ -23,7 +23,7 @@ void gpsUpdate(){
       // Call a function to parse the GPS data if valid
       gpsParse(gpsData);
     }
-    delay(5000);
+    vTaskDelay(pdMS_TO_TICKS(5000));
   } else {
     Serial.println("GPS data not available or invalid.");
   }

@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <esp_task_wdt.h>
 #include "ModbusCom.h"
 #include "globals.h"
 #include "SDCard.h"
@@ -7,6 +8,8 @@
 #include "MQTT.h"
 #include "GPS.h"
 #include "RTC.h"
+
+#define TASK_WDT_TIMEOUT 60
 
 SemaphoreHandle_t timeMutex;
 
@@ -67,8 +70,25 @@ void localLog(void *pvParameters);
 void setup() {
   Serial.begin(115200);
 
+  // Initialize the Task Watchdog Timer
+  esp_task_wdt_init(TASK_WDT_TIMEOUT, true);
   // Initialize mutex
   timeMutex = xSemaphoreCreateMutex();
+
+  sdInit();
+  getNetworkConfig();
+  getTankConfig();
+  vTaskDelay(pdMS_TO_TICKS(1000));
+  modbusInit();
+  vTaskDelay(pdMS_TO_TICKS(1000));
+  modemInit();
+  vTaskDelay(pdMS_TO_TICKS(1000));
+  mqttInit();
+  vTaskDelay(pdMS_TO_TICKS(1000));
+  gpsInit();
+  vTaskDelay(pdMS_TO_TICKS(1000));
+  rtcInit();
+  vTaskDelay(pdMS_TO_TICKS(1000));
 
   // Retrieve MAC address
   esp_efuse_mac_get_default(mac);
@@ -77,14 +97,13 @@ void setup() {
           mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
   // Print the MAC address
   Serial.printf("ESP32 MAC Address: %s\r\n", macAdr);
-  delay(1000);
   
   // Create FreeRTOS tasks
-  xTaskCreatePinnedToCore(readGPS, "Read GPS", 2048, NULL, 1, &gpsTaskHandle, pro_cpu);
-  xTaskCreatePinnedToCore(readModbus, "Read Modbus", 1280, NULL, 2, &modbusTaskHandle, pro_cpu);
-  xTaskCreatePinnedToCore(checkRTC, "Check RTC", 2048, NULL, 0, &rtcTaskHandle, app_cpu);
-  xTaskCreatePinnedToCore(localLog, "Log to SD", 3072, NULL, 1, &logTaskHandle, app_cpu);
-  xTaskCreatePinnedToCore(remotePush, "Connect MQTT", 2048, NULL, 2, &pushTaskHandle, app_cpu);
+  xTaskCreatePinnedToCore(readGPS, "Read GPS", 2048, NULL, 2, &gpsTaskHandle, pro_cpu);
+  xTaskCreatePinnedToCore(readModbus, "Read Modbus", 3072, NULL, 1, &modbusTaskHandle, pro_cpu);
+  xTaskCreatePinnedToCore(checkRTC, "Check RTC", 2048, NULL, 1, &rtcTaskHandle, app_cpu);
+  xTaskCreatePinnedToCore(localLog, "Log to SD", 3072, NULL, 0, &logTaskHandle, app_cpu);
+  xTaskCreatePinnedToCore(remotePush, "Push to MQTT", 3072, NULL, 0, &pushTaskHandle, app_cpu);
 
   vTaskDelete(NULL);
 }

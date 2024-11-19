@@ -3,7 +3,7 @@
 #include "globals.h"
 #include "ModbusCom.h"
 
-void initModbus(){
+void modbusInit(){
   // Initialize the Modbus RTU client
   if (!ModbusRTUClient.begin(9600)) {
   Serial.println("Failed to start Modbus RTU Client!");
@@ -25,11 +25,11 @@ void readModbus(){
       *dataPointers[j] = ModbusRTUClient.holdingRegisterRead<float>(probeId[i], modbusReg[j], BIGEND);
 
       if (*dataPointers[j] < 0) {
-        Serial.printf("Failed to read %s for probe ID: %d\r\nError: %d\r\n", labels[j], probeId[i], ModbusRTUClient.lastError());
+        Serial.printf("Failed to read %s for probe ID: %d\r\nError: ", labels[j], probeId[i]);
+        Serial.println(ModbusRTUClient.lastError());
       } else {
         Serial.printf("%s: %.2f\r\n", labels[j], *dataPointers[j]);
       }
     }
   }
-  delay(1000);
 }

@@ -16,7 +16,7 @@ void remotePush(){
   if(!mqtt.connected()){
     mqttReconnect();
   }
-  mqtt.loop();
+  // mqtt.loop();
 
   // Combine date and time into a single string
   char dateTimeString[40];

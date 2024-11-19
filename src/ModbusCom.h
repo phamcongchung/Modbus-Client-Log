@@ -2,7 +2,7 @@
 #define MODBUSCOM_H
 
 // Function declarations
-void initModbus();
+void modbusInit();
 void readModbus();
 
 #endif
