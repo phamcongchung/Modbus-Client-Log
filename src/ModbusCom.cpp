@@ -1,4 +1,3 @@
-#include <Arduino.h>
 #include <ModbusRTUClient.h>
 #include "globals.h"
 #include "ModbusCom.h"
@@ -6,12 +5,8 @@
 void modbusInit(){
   // Initialize the Modbus RTU client
   if (!ModbusRTUClient.begin(9600)) {
-  Serial.println("Failed to start Modbus RTU Client!");
-  Serial.println("Reconnecting Modbus");
-  ModbusRTUClient.begin(9600);
+    Serial.println("Failed to start Modbus RTU Client!");
   }
-  delay(1000);
-  Serial.println("Modbus RTU Client initialized.");
 }
 
 void readModbus(){

@@ -1,4 +1,3 @@
-#include <Arduino.h>
 #include <ArduinoJson.h>
 #include <vector>
 #include <SD.h>
@@ -24,6 +23,7 @@ void getNetworkConfig(){
 
   // Extract Network Configuration as String
   apn = config["NetworkConfiguration"]["Apn"].as<String>();
+  simPin = config["NetworkConfiguration"]["SimPin"].as<String>();
   gprsUser = config["NetworkConfiguration"]["GprsUser"].as<String>();
   gprsPass = config["NetworkConfiguration"]["GprsPass"].as<String>();
   topic = config["NetworkConfiguration"]["Topic"].as<String>();

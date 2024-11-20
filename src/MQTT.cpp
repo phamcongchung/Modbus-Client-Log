@@ -1,4 +1,3 @@
-#include <Arduino.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include "globals.h"
@@ -10,13 +9,16 @@ void mqttInit(){
   mqtt.setServer(broker.c_str(), port);
   mqtt.setBufferSize(1024);
   mqtt.setCallback(mqttCallback);
+  if(!mqtt.connected()){
+    mqttReconnect();
+  }
 }
 
 void remotePush(){
   if(!mqtt.connected()){
     mqttReconnect();
   }
-  // mqtt.loop();
+  mqtt.loop();
 
   // Combine date and time into a single string
   char dateTimeString[40];
@@ -58,16 +60,50 @@ void mqttReconnect(){
       // Subscribe
       mqtt.subscribe(topic.c_str());
     } else {
-      Serial.print("Failed, rc=");
-      Serial.print(mqtt.state());
+      Serial.print("Failed, ");
+      printError(mqtt.state());
       Serial.println("Try again in 5 seconds");
-      // Wait 5 seconds before retrying
-      delay(1000);
+      vTaskDelay(pdMS_TO_TICKS(5000));
     }
   }
 }
 
-void mqttCallback(char* topic, byte* message, unsigned int len) {
+void printError(int state){
+  switch (mqtt.state()) {
+    case MQTT_CONNECTION_TIMEOUT:
+      Serial.println("connection timed out");
+      break;
+    case MQTT_CONNECTION_LOST:
+      Serial.println("connection lost");
+      break;
+    case MQTT_CONNECT_FAILED:
+      Serial.println("connection failed");
+      break;
+    case MQTT_DISCONNECTED:
+      Serial.println("disconnected");
+      break;
+    case MQTT_CONNECT_BAD_PROTOCOL:
+      Serial.println("bad protocol");
+      break;
+    case MQTT_CONNECT_BAD_CLIENT_ID:
+      Serial.println("bad Client ID");
+      break;
+    case MQTT_CONNECT_UNAVAILABLE:
+      Serial.println("server unavailable");
+      break;
+    case MQTT_CONNECT_BAD_CREDENTIALS:
+      Serial.println("bad username or password");
+      break;
+    case MQTT_CONNECT_UNAUTHORIZED:
+      Serial.println("unauthorized");
+      break;
+    default:
+      Serial.println("unknown error");
+      break;
+  }
+}
+
+void mqttCallback(char* topic, byte* message, unsigned int len){
   Serial.print("Message arrived on topic: ");
   Serial.print(topic);
   Serial.print(". Message: ");

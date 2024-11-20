@@ -1,4 +1,3 @@
-#include <Arduino.h>
 #include "globals.h"
 #include "RTC.h"
 
@@ -42,8 +41,8 @@ RtcDateTime getTime(const RtcDateTime& dt){
     if (!Rtc.GetIsRunning())
     {
         Serial.println("RTC was not actively running, starting now");
-        Rtc.SetIsRunning(true);
         rtcInit();
+        Rtc.SetIsRunning(true);
     }
     snprintf_P(dateString,
             countof(dateString),

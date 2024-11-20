@@ -1,13 +1,9 @@
-#include <Arduino.h>
 #include "globals.h"
+#include "Modem.h"
 #include "GPS.h"
 
 void gpsInit(){
-  // Enable GPS
-  Serial.println("Enabling GPS...");
-  modem.sendAT("+CGPS=1,1");  // Start GPS in standalone mode
-  modem.waitResponse(10000L);
-  Serial.println("Waiting for GPS data...");
+  gpsEn();
 }
 
 void gpsUpdate(){
@@ -18,6 +14,7 @@ void gpsUpdate(){
     // Check if the data contains invalid GPS values
     if (gpsData.indexOf(",,,,,,,,") != -1) {
       Serial.println("Error: GPS data is invalid (no fix or no data available).");
+      latitude = -1; longitude = -1; altitude = -1; speed = -1;
     } else {
       Serial.println("Raw GPS Data: " + gpsData);
       // Call a function to parse the GPS data if valid
@@ -32,9 +29,10 @@ void gpsUpdate(){
 void gpsParse(const String& gpsData){
   String rawLat = getValue(gpsData, ',', 0); latDir = getValue(gpsData, ',', 1);
   String rawLong = getValue(gpsData, ',', 2); longDir = getValue(gpsData, ',', 3);
-  altitude = getValue(gpsData, ',', 6); speed = getValue(gpsData, ',', 7);
   latitude = coordConvert(rawLat, latDir);
   longitude = coordConvert(rawLong, longDir);
+  altitude = getValue(gpsData, ',', 6);
+  speed = getValue(gpsData, ',', 7);
 }
 
 float coordConvert(String coord, String direction){

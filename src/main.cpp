@@ -23,6 +23,7 @@ std::vector<ProbeData> probeData;
 
 // GPRSS credentials
 String apn;
+String simPin;
 String gprsUser;
 String gprsPass;
 // MQTT credentials
@@ -128,28 +129,30 @@ void readModbus(void *pvParameters) {
 
 void remotePush(void *pvParameters){
   while(1){
-    if (xSemaphoreTake(timeMutex, portMAX_DELAY) == pdTRUE) {
-      remotePush();
-    }
+    //if (xSemaphoreTake(timeMutex, portMAX_DELAY) == pdTRUE) {
+      if (modemConnect()){
+        remotePush();
+      }
+    //}
     vTaskDelay(pushDelay);
   }
 }
 
 void localLog(void *pvParameters){
   while(1){
-    if (xSemaphoreTake(timeMutex, portMAX_DELAY) == pdTRUE) {
+    //if (xSemaphoreTake(timeMutex, portMAX_DELAY) == pdTRUE) {
       localLog();
-    }
+    //}
     vTaskDelay(logDelay);
   }
 }
 
 void checkRTC(void *pvParameters){
   while(1){
-    if (xSemaphoreTake(timeMutex, portMAX_DELAY) == pdTRUE) {
+    //if (xSemaphoreTake(timeMutex, portMAX_DELAY) == pdTRUE) {
       getTime(now);
-      xSemaphoreGive(timeMutex);
-    }
+    //  xSemaphoreGive(timeMutex);
+    //}
     vTaskDelay(rtcDelay);
   }
 }

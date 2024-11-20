@@ -2,7 +2,7 @@
 #define MODEM_H
 
 void modemInit();
-void modemConnect();
-void enGPS();
+bool modemConnect();
+void gpsEn();
 
 #endif

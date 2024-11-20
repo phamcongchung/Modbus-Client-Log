@@ -34,6 +34,7 @@ extern std::vector<ProbeData> probeData;
 
 // GPRSS credentials
 extern String apn;
+extern String simPin;
 extern String gprsUser;
 extern String gprsPass;
 // MQTT credentials
