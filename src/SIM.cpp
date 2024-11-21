@@ -1,7 +1,7 @@
 #include <Arduino.h>
 #include <string>
 #include "globals.h"
-#include "Modem.h"
+#include "SIM.h"
 
 HardwareSerial SerialAT(1);
 TinyGsm modem(SerialAT);
@@ -21,6 +21,7 @@ void modemInit(){
       Serial.println("Failed to unlock SIM.");
     }
   }
+  modemConnect();
 }
 
 bool modemConnect() {

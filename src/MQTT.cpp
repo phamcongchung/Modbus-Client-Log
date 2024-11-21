@@ -23,7 +23,7 @@ void remotePush(){
   // Combine date and time into a single string
   char dateTimeString[40];
   snprintf(dateTimeString, sizeof(dateTimeString), "%s %s", dateString, timeString);
-
+  Serial.print(dateTimeString);
   StaticJsonDocument<1024> data;
   data["Device"] = macAdr;
   data["Date/Time"] = dateTimeString;
@@ -59,6 +59,7 @@ void mqttReconnect(){
       Serial.println("Connected");
       // Subscribe
       mqtt.subscribe(topic.c_str());
+      return;
     } else {
       Serial.print("Failed, ");
       printError(mqtt.state());

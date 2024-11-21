@@ -4,14 +4,14 @@
 #include "globals.h"
 #include "SDCard.h"
 #include "Config.h"
-#include "Modem.h"
+#include "SIM.h"
 #include "MQTT.h"
 #include "GPS.h"
 #include "RTC.h"
 
 #define TASK_WDT_TIMEOUT 60
 
-SemaphoreHandle_t timeMutex;
+SemaphoreHandle_t mutex;
 
 static const BaseType_t pro_cpu = 0;
 static const BaseType_t app_cpu = 1;
@@ -55,11 +55,11 @@ static TaskHandle_t pushTaskHandle = NULL;
 static TaskHandle_t logTaskHandle = NULL;
 
 // Task delay times
-const TickType_t gpsDelay = pdMS_TO_TICKS(1000);
-const TickType_t modbusDelay = pdMS_TO_TICKS(1000);
-const TickType_t rtcDelay = pdMS_TO_TICKS(60000);
+const TickType_t gpsDelay = pdMS_TO_TICKS(5000);
+const TickType_t modbusDelay = pdMS_TO_TICKS(5000);
+const TickType_t rtcDelay = pdMS_TO_TICKS(5000);
 const TickType_t logDelay = pdMS_TO_TICKS(5000);
-const TickType_t pushDelay = pdMS_TO_TICKS(1000);
+const TickType_t pushDelay = pdMS_TO_TICKS(5000);
 
 // Task prototypes
 void readGPS(void *pvParameters);
@@ -74,7 +74,7 @@ void setup() {
   // Initialize the Task Watchdog Timer
   esp_task_wdt_init(TASK_WDT_TIMEOUT, true);
   // Initialize mutex
-  timeMutex = xSemaphoreCreateMutex();
+  mutex = xSemaphoreCreateMutex();
 
   sdInit();
   getNetworkConfig();
@@ -100,11 +100,11 @@ void setup() {
   Serial.printf("ESP32 MAC Address: %s\r\n", macAdr);
   
   // Create FreeRTOS tasks
-  xTaskCreatePinnedToCore(readGPS, "Read GPS", 2048, NULL, 2, &gpsTaskHandle, pro_cpu);
-  xTaskCreatePinnedToCore(readModbus, "Read Modbus", 3072, NULL, 1, &modbusTaskHandle, pro_cpu);
-  xTaskCreatePinnedToCore(checkRTC, "Check RTC", 2048, NULL, 1, &rtcTaskHandle, app_cpu);
-  xTaskCreatePinnedToCore(localLog, "Log to SD", 3072, NULL, 0, &logTaskHandle, app_cpu);
-  xTaskCreatePinnedToCore(remotePush, "Push to MQTT", 3072, NULL, 0, &pushTaskHandle, app_cpu);
+  xTaskCreatePinnedToCore(readGPS, "Read GPS", 2048, NULL, 1, &gpsTaskHandle, pro_cpu);
+  xTaskCreatePinnedToCore(readModbus, "Read Modbus", 3072, NULL, 1, &modbusTaskHandle, app_cpu);
+  xTaskCreatePinnedToCore(checkRTC, "Check RTC", 2048, NULL, 2, &rtcTaskHandle, app_cpu);
+  xTaskCreatePinnedToCore(localLog, "Log to SD", 3072, NULL, 1, &logTaskHandle, pro_cpu);
+  xTaskCreatePinnedToCore(remotePush, "Push to MQTT", 3072, NULL, 1, &pushTaskHandle, app_cpu);
 
   vTaskDelete(NULL);
 }
@@ -116,6 +116,8 @@ void loop() {
 void readGPS(void *pvParameters){
   while(1){
     gpsUpdate();
+    xTaskNotifyGive(pushTaskHandle);
+    xTaskNotifyGive(logTaskHandle);
     vTaskDelay(gpsDelay);
   }
 }
@@ -123,36 +125,36 @@ void readGPS(void *pvParameters){
 void readModbus(void *pvParameters) {
   while(1){
     readModbus();
+    xTaskNotifyGive(pushTaskHandle);
+    xTaskNotifyGive(logTaskHandle);
     vTaskDelay(modbusDelay);
   }
 }
 
 void remotePush(void *pvParameters){
   while(1){
-    //if (xSemaphoreTake(timeMutex, portMAX_DELAY) == pdTRUE) {
-      if (modemConnect()){
-        remotePush();
-      }
-    //}
+    if(modemConnect){
+      remotePush();
+      ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    }
     vTaskDelay(pushDelay);
   }
 }
 
 void localLog(void *pvParameters){
   while(1){
-    //if (xSemaphoreTake(timeMutex, portMAX_DELAY) == pdTRUE) {
-      localLog();
-    //}
+    localLog();
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
     vTaskDelay(logDelay);
   }
 }
 
 void checkRTC(void *pvParameters){
   while(1){
-    //if (xSemaphoreTake(timeMutex, portMAX_DELAY) == pdTRUE) {
-      getTime(now);
-    //  xSemaphoreGive(timeMutex);
-    //}
+    now = Rtc.GetDateTime();
+    getTime(now);
+    xTaskNotifyGive(pushTaskHandle);
+    xTaskNotifyGive(logTaskHandle);
     vTaskDelay(rtcDelay);
   }
 }

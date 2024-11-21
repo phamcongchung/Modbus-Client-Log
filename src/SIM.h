@@ -1,5 +1,5 @@
-#ifndef MODEM_H
-#define MODEM_H
+#ifndef SIM_H
+#define SIM_H
 
 void modemInit();
 bool modemConnect();
