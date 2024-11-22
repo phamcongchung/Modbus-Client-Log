@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <string>
 #include "globals.h"
+#include "SDLogger.h"
 #include "SIM.h"
 
 HardwareSerial SerialAT(1);
@@ -28,19 +29,14 @@ bool modemConnect() {
   Serial.print("Connecting to APN: ");
   Serial.println(apn);
   if (!modem.gprsConnect(apn.c_str(), gprsUser.c_str(), gprsPass.c_str())) {
-    Serial.println("LTE connection failed");
+    Serial.println("GPRS connection failed");
+    errorLog("GPRS connection failed");
     return false;
     modem.restart();
   }
   else {
-    Serial.println("4G connected");
-    if (!modem.isGprsConnected()) {
-      Serial.println("GPRS connection failed");
-      return false;
-    } else {
-      Serial.println("GPRS connected");
-      return true;
-    }
+    Serial.println("GPRS connected");
+    return true;
   }
 }
 

@@ -1,5 +1,6 @@
 #include <ModbusRTUClient.h>
 #include "globals.h"
+#include "SDLogger.h"
 #include "ModbusCom.h"
 
 void modbusInit(){
@@ -22,6 +23,7 @@ void readModbus(){
       if (*dataPointers[j] < 0) {
         Serial.printf("Failed to read %s for probe ID: %d\r\nError: ", labels[j], probeId[i]);
         Serial.println(ModbusRTUClient.lastError());
+        errorLog(ModbusRTUClient.lastError());
       } else {
         Serial.printf("%s: %.2f\r\n", labels[j], *dataPointers[j]);
       }

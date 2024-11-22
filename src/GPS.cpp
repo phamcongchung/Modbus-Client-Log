@@ -1,5 +1,6 @@
 #include "globals.h"
 #include "SIM.h"
+#include "SDLogger.h"
 #include "GPS.h"
 
 void gpsInit(){
@@ -13,7 +14,8 @@ void gpsUpdate(){
 
     // Check if the data contains invalid GPS values
     if (gpsData.indexOf(",,,,,,,,") != -1) {
-      Serial.println("Error: GPS data is invalid (no fix or no data available).");
+      Serial.println("GPS data is invalid (no fix or no data available).");
+      errorLog("GPS data is invalid (no fix or no data available).");
       latitude = -1; longitude = -1; altitude = -1; speed = -1;
     } else {
       Serial.println("Raw GPS Data: " + gpsData);

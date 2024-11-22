@@ -1,6 +1,6 @@
 #include <SD.h>
 #include "globals.h"
-#include "SDCard.h"
+#include "SDLogger.h"
 
 void sdInit(){
   // Initialize the microSD card
@@ -29,28 +29,48 @@ void sdInit(){
 
   // If the log.csv file doesn't exist
   // Create a file on the SD card and write the data labels
-  File file = SD.open("/log.csv");
-  if(!file) {
-    Serial.println("File doens't exist");
-    Serial.println("Creating file...");
-    writeFile(SD, "/log.csv", "Date,Time,Latitude,Longitude,Speed(km/h),Altitude(m)"
-                              "Volume(l),Ullage(l),Temperature(°C)"
-                              "Product level(mm),Water level(mm)\n");
+  for(size_t i = 0; i < probeId.size(); i++){
+    String fileName = "/log" + String(i + 1) + ".csv";
+    File file = SD.open(fileName.c_str());
+    if(!file){
+      Serial.println("File doens't exist. Creating file...");
+      writeFile(SD, fileName.c_str(), "Date,Time,Latitude,Longitude,Speed(km/h),Altitude(m)"
+                                      "Volume(l),Ullage(l),Temperature(°C)"
+                                      "Product level(mm),Water level(mm)\n");
+    } else {
+      Serial.println("File already exists");  
+    }
+    file.close();
   }
-  else {
+  // If the error.csv file doesn't exist
+  // Create a file on the SD card and write the data labels
+  File file = SD.open("/error.csv");
+  if(!file){
+    Serial.println("File doens't exist. Creating file...");
+    writeFile(SD, "/error.csv", "Date,Time,Error");
+  } else {
     Serial.println("File already exists");  
   }
   file.close();
 }
 
-void localLog(){
-  snprintf(logString, sizeof(logString), "%s;%s;%f;%f;%s;%s;%.1f;%.1f;%.1f;%.1f;%.1f\n",
-           dateString, timeString, latitude, longitude, speed, altitude, probeData[0].volume,
-           probeData[0].ullage, probeData[0].temperature, probeData[0].product, probeData[0].water);
-  appendFile(SD, "/log.csv", logString);
+void dataLog(){
+  for(size_t i = 0; i < probeId.size(); i++){
+    String fileName = "/log" + String(i + 1) + ".csv";
+    snprintf(logString, sizeof(logString), "%s;%s;%f;%f;%s;%s;%.1f;%.1f;%.1f;%.1f;%.1f\n",
+            dateString, timeString, latitude, longitude, speed, altitude, probeData[i].volume,
+            probeData[i].ullage, probeData[i].temperature, probeData[i].product, probeData[i].water);
+    appendFile(SD, fileName.c_str(), logString);
+  }
 }
 
-void appendFile(fs::FS &fs, const char * path, const char * message){
+void errorLog(const char* errorMsg){
+  RtcDateTime present = Rtc.GetDateTime();
+  File file = SD.open("/error.csv");
+  writeFile(SD, "/error.csv", errorMsg);
+}
+
+void appendFile(fs::FS &fs, const char* path, const char* message){
   Serial.printf("Appending to file: %s\r\n", path);
   
   File file = fs.open(path, FILE_APPEND);

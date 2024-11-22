@@ -1,5 +1,5 @@
-#ifndef MQTT_H
-#define MQTT_H
+#ifndef REMOTELOGGER_H
+#define REMOTELOGGER_H
 
 void mqttInit();
 void remotePush();

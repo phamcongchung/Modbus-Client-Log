@@ -1,7 +1,8 @@
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include "globals.h"
-#include "MQTT.h"
+#include "SDLogger.h"
+#include "RemoteLogger.h"
 
 PubSubClient mqtt(client);
 
@@ -35,7 +36,7 @@ void remotePush(){
   gps["Speed"] = speed.toFloat();
 
   JsonArray measures = data.createNestedArray("Measure");
-  for(int i = 0; i < probeId.size(); i++){
+  for(size_t i = 0; i < probeId.size(); i++){
     JsonObject measure = measures.createNestedObject();
     measure["Id"] = probeId[i];
     measure["Volume"] = probeData[i].volume;
@@ -73,33 +74,43 @@ void printError(int state){
   switch (mqtt.state()) {
     case MQTT_CONNECTION_TIMEOUT:
       Serial.println("connection timed out");
+      errorLog("MQTT connection timed out");
       break;
     case MQTT_CONNECTION_LOST:
       Serial.println("connection lost");
+      errorLog("MQTT connection lost");
       break;
     case MQTT_CONNECT_FAILED:
       Serial.println("connection failed");
+      errorLog("MQTT connection failed");
       break;
     case MQTT_DISCONNECTED:
       Serial.println("disconnected");
+      errorLog("MQTT disconnected");
       break;
     case MQTT_CONNECT_BAD_PROTOCOL:
       Serial.println("bad protocol");
+      errorLog("MQTT bad protocol");
       break;
     case MQTT_CONNECT_BAD_CLIENT_ID:
       Serial.println("bad Client ID");
+      errorLog("MQTT bad client");
       break;
     case MQTT_CONNECT_UNAVAILABLE:
       Serial.println("server unavailable");
+      errorLog("MQTT server unavailable");
       break;
     case MQTT_CONNECT_BAD_CREDENTIALS:
       Serial.println("bad username or password");
+      errorLog("MQTT bad username or password");
       break;
     case MQTT_CONNECT_UNAUTHORIZED:
       Serial.println("unauthorized");
+      errorLog("MQTT unauthorized");
       break;
     default:
       Serial.println("unknown error");
+      errorLog("MQTT unknown error");
       break;
   }
 }

@@ -1,5 +1,5 @@
-#ifndef CONFIG_H
-#define CONFIG_H
+#ifndef CONFIGMANAGER_H
+#define CONFIGMANAGER_H
 
 void getNetworkConfig();
 void getTankConfig();

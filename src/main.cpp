@@ -1,11 +1,11 @@
 #include <Arduino.h>
 #include <esp_task_wdt.h>
+#include "ConfigManager.h"
+#include "RemoteLogger.h"
 #include "ModbusCom.h"
 #include "globals.h"
-#include "SDCard.h"
-#include "Config.h"
+#include "SDLogger.h"
 #include "SIM.h"
-#include "MQTT.h"
 #include "GPS.h"
 #include "RTC.h"
 
@@ -143,7 +143,7 @@ void remotePush(void *pvParameters){
 
 void localLog(void *pvParameters){
   while(1){
-    localLog();
+    dataLog();
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
     vTaskDelay(logDelay);
   }

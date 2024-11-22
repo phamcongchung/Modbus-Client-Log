@@ -1,4 +1,5 @@
 #include "globals.h"
+#include "SDLogger.h"
 #include "RTC.h"
 
 void rtcInit(){
@@ -41,6 +42,7 @@ RtcDateTime getTime(const RtcDateTime& dt){
     if (!Rtc.GetIsRunning())
     {
         Serial.println("RTC was not actively running, starting now");
+        errorLog("RTC stopped running");
         rtcInit();
         Rtc.SetIsRunning(true);
     }

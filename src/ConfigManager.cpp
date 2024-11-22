@@ -2,12 +2,12 @@
 #include <vector>
 #include <SD.h>
 #include "globals.h"
-#include "Config.h"
+#include "ConfigManager.h"
 
 void getNetworkConfig(){
   File file = SD.open("/config.json");
   if (!file) {
-    Serial.println("Failed to open file for reading");
+    Serial.println("Failed to open network config file");
     return;
   }
   // Allocate a JSON document
@@ -15,7 +15,7 @@ void getNetworkConfig(){
   // Parse the JSON from the file
   DeserializationError error = deserializeJson(config, file);
   if (error) {
-    Serial.print("Failed to parse file: ");
+    Serial.print("Failed to get network config: ");
     Serial.println(error.f_str());
     return;
   }
@@ -36,7 +36,7 @@ void getNetworkConfig(){
 void getTankConfig(){
   File file = SD.open("/config.json");
   if (!file) {
-    Serial.println("Failed to open file for reading");
+    Serial.println("Failed to open tank config file");
     return;
   }
   // Allocate a JSON document
@@ -44,7 +44,7 @@ void getTankConfig(){
   // Parse the JSON from the file
   DeserializationError error = deserializeJson(config, file);
   if (error) {
-    Serial.print("Failed to parse file: ");
+    Serial.print("Failed to get tank config: ");
     Serial.println(error.f_str());
     return;
   }
