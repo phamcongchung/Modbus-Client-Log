@@ -1,8 +1,7 @@
-#include <SD.h>
-#include "globals.h"
+#include <Arduino.h>
 #include "SDLogger.h"
 
-void sdInit(){
+void SDLogger::init(){
   // Initialize the microSD card
   if(!SD.begin(5)){
     Serial.println("Card Mount Failed");
@@ -29,7 +28,7 @@ void sdInit(){
 
   // If the log.csv file doesn't exist
   // Create a file on the SD card and write the data labels
-  for(size_t i = 0; i < probeId.size(); i++){
+  for(size_t i = 0; i < config.probeId.size(); i++){
     String fileName = "/log" + String(i + 1) + ".csv";
     File file = SD.open(fileName.c_str());
     if(!file){
@@ -54,20 +53,21 @@ void sdInit(){
   file.close();
 }
 
-void dataLog(){
-  for(size_t i = 0; i < probeId.size(); i++){
+void SDLogger::log(){
+  for(size_t i = 0; i < config.probeId.size(); i++){
     String fileName = "/log" + String(i + 1) + ".csv";
     snprintf(logString, sizeof(logString), "%s;%s;%f;%f;%s;%s;%.1f;%.1f;%.1f;%.1f;%.1f\n",
-            dateString, timeString, latitude, longitude, speed, altitude, probeData[i].volume,
-            probeData[i].ullage, probeData[i].temperature, probeData[i].product, probeData[i].water);
+            rtc.date, rtc.time, gps.latitude, gps.longitude, gps.speed, gps.altitude,
+            modbus.probeData[i].volume, modbus.probeData[i].ullage, modbus.probeData[i].temperature,
+            modbus.probeData[i].product, modbus.probeData[i].water);
     appendFile(SD, fileName.c_str(), logString);
   }
 }
 
-void errorLog(const char* errorMsg){
-  RtcDateTime present = Rtc.GetDateTime();
+void SDLogger::errLog(const char* msg){
+  String errMsg = String(rtc.getTime()) + "," + String(msg);
   File file = SD.open("/error.csv");
-  writeFile(SD, "/error.csv", errorMsg);
+  appendFile(SD, "/error.csv", errMsg.c_str());
 }
 
 void appendFile(fs::FS &fs, const char* path, const char* message){

@@ -3,7 +3,6 @@
 #include "ConfigManager.h"
 #include "RemoteLogger.h"
 #include "ModbusCom.h"
-#include "globals.h"
 #include "SDLogger.h"
 #include "SIM.h"
 #include "GPS.h"
@@ -12,40 +11,80 @@
 #define TASK_WDT_TIMEOUT 60
 
 SemaphoreHandle_t mutex;
+HardwareSerial SerialAT(1);
+ConfigManager config;
+ModbusCom modbus(config);
+SIM sim(config, SerialAT);
+GPS gps(sim);
+RTC rtc(Wire);
+SDLogger sd(config, modbus, gps, rtc);
+RemoteLogger remote(config, sim, gps, rtc, modbus);
 
 static const BaseType_t pro_cpu = 0;
 static const BaseType_t app_cpu = 1;
 
-// External vectors for probe IDs, Modbus registers, and probe data
-std::vector<int> probeId;
-std::vector<uint16_t> modbusReg;
-std::vector<ProbeData> probeData;
-
-// GPRSS credentials
-String apn;
-String simPin;
-String gprsUser;
-String gprsPass;
-// MQTT credentials
-String topic;
-String broker;
-String brokerUser;
-String brokerPass;
-uint16_t port;
-// GPS data
-float latitude, longitude;
-String latDir, longDir, altitude, speed;
-// Create a string to hold the formatted MAC address and log data
 uint8_t mac[6];
 char macAdr[18];
-char dateString[20];
-char timeString[20];
-char logString[300];
-// Real-time variables
-RtcDateTime now, compiled;
-RtcDS3231<TwoWire> Rtc(Wire);
+
 // Stores the last time an action was triggered
 unsigned long previousMillis = 0;
+
+void GPS::error(const char* err){
+  sd.errLog(err);
+}
+
+void ModbusCom::error(const char* err){
+  sd.errLog(err);
+}
+
+void SIM::gprsErr(const char* err){
+  sd.errLog(err);
+}
+
+void RemoteLogger::mqttErr(int state){
+  switch (state) {
+    case MQTT_CONNECTION_TIMEOUT:
+      Serial.println("connection timed out");
+      sd.errLog("MQTT connection timed out");
+      break;
+    case MQTT_CONNECTION_LOST:
+      Serial.println("connection lost");
+      sd.errLog("MQTT connection lost");
+      break;
+    case MQTT_CONNECT_FAILED:
+      Serial.println("connection failed");
+      sd.errLog("MQTT connection failed");
+      break;
+    case MQTT_DISCONNECTED:
+      Serial.println("disconnected");
+      sd.errLog("MQTT disconnected");
+      break;
+    case MQTT_CONNECT_BAD_PROTOCOL:
+      Serial.println("bad protocol");
+      sd.errLog("MQTT bad protocol");
+      break;
+    case MQTT_CONNECT_BAD_CLIENT_ID:
+      Serial.println("bad Client ID");
+      sd.errLog("MQTT bad Client ID");
+      break;
+    case MQTT_CONNECT_UNAVAILABLE:
+      Serial.println("server unavailable");
+      sd.errLog("MQTT server unavailable");
+      break;
+    case MQTT_CONNECT_BAD_CREDENTIALS:
+      Serial.println("bad username or password");
+      sd.errLog("MQTT bad username or password");
+      break;
+    case MQTT_CONNECT_UNAUTHORIZED:
+      Serial.println("unauthorized");
+      sd.errLog("MQTT unauthorized");
+      break;
+    default:
+      Serial.println("unknown error");
+      sd.errLog("MQTT unknown error");
+      break;
+  }
+}
 
 // Task handles
 static TaskHandle_t gpsTaskHandle = NULL;
@@ -76,21 +115,6 @@ void setup() {
   // Initialize mutex
   mutex = xSemaphoreCreateMutex();
 
-  sdInit();
-  getNetworkConfig();
-  getTankConfig();
-  vTaskDelay(pdMS_TO_TICKS(1000));
-  modbusInit();
-  vTaskDelay(pdMS_TO_TICKS(1000));
-  modemInit();
-  vTaskDelay(pdMS_TO_TICKS(1000));
-  mqttInit();
-  vTaskDelay(pdMS_TO_TICKS(1000));
-  gpsInit();
-  vTaskDelay(pdMS_TO_TICKS(1000));
-  rtcInit();
-  vTaskDelay(pdMS_TO_TICKS(1000));
-
   // Retrieve MAC address
   esp_efuse_mac_get_default(mac);
   // Format the MAC address into the string
@@ -98,6 +122,21 @@ void setup() {
           mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
   // Print the MAC address
   Serial.printf("ESP32 MAC Address: %s\r\n", macAdr);
+
+  sd.init();
+  config.getNetwork();
+  config.getTank();
+  vTaskDelay(pdMS_TO_TICKS(1000));
+  modbus.init();
+  vTaskDelay(pdMS_TO_TICKS(1000));
+  sim.init();
+  vTaskDelay(pdMS_TO_TICKS(1000));
+  remote.init(macAdr);
+  vTaskDelay(pdMS_TO_TICKS(1000));
+  gps.init();
+  vTaskDelay(pdMS_TO_TICKS(1000));
+  rtc.init();
+  vTaskDelay(pdMS_TO_TICKS(1000));
   
   // Create FreeRTOS tasks
   xTaskCreatePinnedToCore(readGPS, "Read GPS", 2048, NULL, 1, &gpsTaskHandle, pro_cpu);
@@ -115,7 +154,7 @@ void loop() {
 
 void readGPS(void *pvParameters){
   while(1){
-    gpsUpdate();
+    gps.update();
     xTaskNotifyGive(pushTaskHandle);
     xTaskNotifyGive(logTaskHandle);
     vTaskDelay(gpsDelay);
@@ -124,7 +163,7 @@ void readGPS(void *pvParameters){
 
 void readModbus(void *pvParameters) {
   while(1){
-    readModbus();
+    modbus.read();
     xTaskNotifyGive(pushTaskHandle);
     xTaskNotifyGive(logTaskHandle);
     vTaskDelay(modbusDelay);
@@ -133,8 +172,8 @@ void readModbus(void *pvParameters) {
 
 void remotePush(void *pvParameters){
   while(1){
-    if(modemConnect){
-      remotePush();
+    if(sim.connect()){
+      remote.push(macAdr);
       ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
     }
     vTaskDelay(pushDelay);
@@ -143,7 +182,7 @@ void remotePush(void *pvParameters){
 
 void localLog(void *pvParameters){
   while(1){
-    dataLog();
+    sd.log();
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
     vTaskDelay(logDelay);
   }
@@ -151,8 +190,7 @@ void localLog(void *pvParameters){
 
 void checkRTC(void *pvParameters){
   while(1){
-    now = Rtc.GetDateTime();
-    getTime(now);
+    rtc.getTime();
     xTaskNotifyGive(pushTaskHandle);
     xTaskNotifyGive(logTaskHandle);
     vTaskDelay(rtcDelay);

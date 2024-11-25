@@ -1,8 +1,7 @@
-#include "globals.h"
 #include "SDLogger.h"
 #include "RTC.h"
 
-void rtcInit(){
+void RTC::init(){
     // Initialize DS3231 communication
     Rtc.Begin();
     compiled = RtcDateTime(__DATE__, __TIME__);
@@ -38,25 +37,27 @@ void rtcInit(){
     }
 }
 
-RtcDateTime getTime(const RtcDateTime& dt){
+const char* RTC::getTime(){
     if (!Rtc.GetIsRunning())
     {
         Serial.println("RTC was not actively running, starting now");
-        errorLog("RTC stopped running");
-        rtcInit();
+        init();
         Rtc.SetIsRunning(true);
     }
-    snprintf_P(dateString,
-            countof(dateString),
+    now = Rtc.GetDateTime();
+    snprintf_P(date,
+            countof(date),
             PSTR("%02u/%02u/%04u"),
-            dt.Month(),
-            dt.Day(),
-            dt.Year());
-    snprintf_P(timeString,
-            countof(timeString),
+            now.Month(),
+            now.Day(),
+            now.Year());
+    snprintf_P(time,
+            countof(time),
             PSTR("%02u:%02u:%02u"),
-            dt.Hour(),
-            dt.Minute(),
-            dt.Second());
-    return Rtc.GetDateTime();
+            now.Hour(),
+            now.Minute(),
+            now.Second());
+    char dateTime[40];
+    snprintf(dateTime, sizeof(dateTime), "%s %s", date, time);
+    return dateTime;
 }

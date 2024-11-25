@@ -1,4 +1,4 @@
-#ifndef GLOBALS_H
+/*#ifndef GLOBALS_H
 #define GLOBALS_H
 
 #include <Arduino.h>
@@ -56,4 +56,4 @@ extern char logString[300];
 extern RtcDateTime now, compiled;
 extern RtcDS3231<TwoWire> Rtc;
 
-#endif
+#endif*/

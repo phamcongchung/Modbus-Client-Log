@@ -1,10 +1,8 @@
-#include <ArduinoJson.h>
-#include <vector>
 #include <SD.h>
-#include "globals.h"
+#include <ArduinoJson.h>
 #include "ConfigManager.h"
 
-void getNetworkConfig(){
+void ConfigManager::getNetwork(){
   File file = SD.open("/config.json");
   if (!file) {
     Serial.println("Failed to open network config file");
@@ -33,7 +31,7 @@ void getNetworkConfig(){
   port = config["NetworkConfiguration"]["Port"].as<uint16_t>();
 }
 
-void getTankConfig(){
+void ConfigManager::getTank(){
   File file = SD.open("/config.json");
   if (!file) {
     Serial.println("Failed to open tank config file");
@@ -53,7 +51,6 @@ void getTankConfig(){
   // Access the Probe Configuration array
   JsonArray tanks = config["TankConfiguration"];
   probeId.reserve(tanks.size());
-  probeData.reserve(tanks.size());
   for(JsonObject tank : tanks){
     JsonArray modbusRegs = tank["ModbusRegister"];
     modbusReg.reserve(modbusRegs.size());

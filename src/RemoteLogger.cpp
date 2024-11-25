@@ -1,121 +1,71 @@
-#include <PubSubClient.h>
 #include <ArduinoJson.h>
-#include "globals.h"
 #include "SDLogger.h"
 #include "RemoteLogger.h"
 
-PubSubClient mqtt(client);
-
-void mqttInit(){
-  mqtt.setServer(broker.c_str(), port);
+void RemoteLogger::init(char macAdr[18]){
+  mqtt.setServer(config.broker.c_str(), config.port);
   mqtt.setBufferSize(1024);
-  mqtt.setCallback(mqttCallback);
+  mqtt.setCallback(callback);
   if(!mqtt.connected()){
-    mqttReconnect();
+    reconnect(macAdr);
   }
 }
 
-void remotePush(){
+void RemoteLogger::push(char macAdr[18]){
   if(!mqtt.connected()){
-    mqttReconnect();
+    reconnect(macAdr);
   }
   mqtt.loop();
 
   // Combine date and time into a single string
-  char dateTimeString[40];
-  snprintf(dateTimeString, sizeof(dateTimeString), "%s %s", dateString, timeString);
-  Serial.print(dateTimeString);
+  
+  Serial.print(rtc.getTime());
   StaticJsonDocument<1024> data;
   data["Device"] = macAdr;
-  data["Date/Time"] = dateTimeString;
+  data["Date/Time"] = rtc.getTime();
 
-  JsonObject gps = data.createNestedObject("Gps");
-  gps["Latitude"] = latitude;
-  gps["Longitude"] = longitude;
-  gps["Altitude"] = altitude.toFloat();
-  gps["Speed"] = speed.toFloat();
+  JsonObject gpsData = data.createNestedObject("Gps");
+  gpsData["Latitude"] = gps.latitude;
+  gpsData["Longitude"] = gps.longitude;
+  gpsData["Altitude"] = gps.altitude.toFloat();
+  gpsData["Speed"] = gps.speed.toFloat();
 
   JsonArray measures = data.createNestedArray("Measure");
-  for(size_t i = 0; i < probeId.size(); i++){
+  for(size_t i = 0; i < config.probeId.size(); i++){
     JsonObject measure = measures.createNestedObject();
-    measure["Id"] = probeId[i];
-    measure["Volume"] = probeData[i].volume;
-    measure["Ullage"] = probeData[i].ullage;
-    measure["Temperature"] = probeData[i].temperature;
-    measure["ProductLevel"] = probeData[i].product;
-    measure["WaterLevel"] = probeData[i].water;
+    measure["Id"] = config.probeId[i];
+    measure["Volume"] = modbus.probeData[i].volume;
+    measure["Ullage"] = modbus.probeData[i].ullage;
+    measure["Temperature"] = modbus.probeData[i].temperature;
+    measure["ProductLevel"] = modbus.probeData[i].product;
+    measure["WaterLevel"] = modbus.probeData[i].water;
   }
   // Serialize JSON and publish
   char buffer[1024];
   size_t n = serializeJson(data, buffer);
-  mqtt.publish(topic.c_str(), buffer, n);
+  mqtt.publish(config.topic.c_str(), buffer, n);
 }
 
-void mqttReconnect(){
+void RemoteLogger::reconnect(char macAdr[18]){
   // Loop until we're reconnected
   while (!mqtt.connected()) {
     Serial.print("Attempting MQTT connection...");
     // Attempt to connect
-    if (mqtt.connect(macAdr, brokerUser.c_str(), brokerPass.c_str())) {
+    if (mqtt.connect(macAdr, config.brokerUser.c_str(), config.brokerPass.c_str())) {
       Serial.println("Connected");
       // Subscribe
-      mqtt.subscribe(topic.c_str());
+      mqtt.subscribe(config.topic.c_str());
       return;
     } else {
       Serial.print("Failed, ");
-      printError(mqtt.state());
+      mqttErr(mqtt.state());
       Serial.println("Try again in 5 seconds");
       vTaskDelay(pdMS_TO_TICKS(5000));
     }
   }
 }
 
-void printError(int state){
-  switch (mqtt.state()) {
-    case MQTT_CONNECTION_TIMEOUT:
-      Serial.println("connection timed out");
-      errorLog("MQTT connection timed out");
-      break;
-    case MQTT_CONNECTION_LOST:
-      Serial.println("connection lost");
-      errorLog("MQTT connection lost");
-      break;
-    case MQTT_CONNECT_FAILED:
-      Serial.println("connection failed");
-      errorLog("MQTT connection failed");
-      break;
-    case MQTT_DISCONNECTED:
-      Serial.println("disconnected");
-      errorLog("MQTT disconnected");
-      break;
-    case MQTT_CONNECT_BAD_PROTOCOL:
-      Serial.println("bad protocol");
-      errorLog("MQTT bad protocol");
-      break;
-    case MQTT_CONNECT_BAD_CLIENT_ID:
-      Serial.println("bad Client ID");
-      errorLog("MQTT bad client");
-      break;
-    case MQTT_CONNECT_UNAVAILABLE:
-      Serial.println("server unavailable");
-      errorLog("MQTT server unavailable");
-      break;
-    case MQTT_CONNECT_BAD_CREDENTIALS:
-      Serial.println("bad username or password");
-      errorLog("MQTT bad username or password");
-      break;
-    case MQTT_CONNECT_UNAUTHORIZED:
-      Serial.println("unauthorized");
-      errorLog("MQTT unauthorized");
-      break;
-    default:
-      Serial.println("unknown error");
-      errorLog("MQTT unknown error");
-      break;
-  }
-}
-
-void mqttCallback(char* topic, byte* message, unsigned int len){
+void callback(char* topic, byte* message, unsigned int len){
   Serial.print("Message arrived on topic: ");
   Serial.print(topic);
   Serial.print(". Message: ");
