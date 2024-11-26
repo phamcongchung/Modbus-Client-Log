@@ -11,7 +11,7 @@ TinyGsmClient client(modem);
 void modemInit(){
   SerialAT.begin(115200, SERIAL_8N1, SIM_RXD, SIM_TXD);
   Serial.println("Initializing modem...");
-  modem.restart();
+  //modem.restart();
   if (modem.getSimStatus() == 2){
     Serial.println("SIM PIN required.");
     // Send the PIN to the modem

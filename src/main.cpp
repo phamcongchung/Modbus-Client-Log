@@ -73,8 +73,6 @@ void setup() {
 
   // Initialize the Task Watchdog Timer
   esp_task_wdt_init(TASK_WDT_TIMEOUT, true);
-  // Initialize mutex
-  mutex = xSemaphoreCreateMutex();
 
   sdInit();
   getNetworkConfig();
@@ -100,10 +98,10 @@ void setup() {
   Serial.printf("ESP32 MAC Address: %s\r\n", macAdr);
   
   // Create FreeRTOS tasks
-  xTaskCreatePinnedToCore(readGPS, "Read GPS", 2048, NULL, 1, &gpsTaskHandle, pro_cpu);
-  xTaskCreatePinnedToCore(readModbus, "Read Modbus", 3072, NULL, 1, &modbusTaskHandle, app_cpu);
-  xTaskCreatePinnedToCore(checkRTC, "Check RTC", 2048, NULL, 2, &rtcTaskHandle, app_cpu);
-  xTaskCreatePinnedToCore(localLog, "Log to SD", 3072, NULL, 1, &logTaskHandle, pro_cpu);
+  xTaskCreatePinnedToCore(readGPS, "Read GPS", 3072, NULL, 1, &gpsTaskHandle, pro_cpu);
+  xTaskCreatePinnedToCore(readModbus, "Read Modbus", 3072, NULL, 1, &modbusTaskHandle, pro_cpu);
+  xTaskCreatePinnedToCore(checkRTC, "Check RTC", 2048, NULL, 2, &rtcTaskHandle, pro_cpu);
+  xTaskCreatePinnedToCore(localLog, "Log to SD", 3072, NULL, 1, &logTaskHandle, app_cpu);
   xTaskCreatePinnedToCore(remotePush, "Push to MQTT", 3072, NULL, 1, &pushTaskHandle, app_cpu);
 
   vTaskDelete(NULL);
@@ -133,10 +131,8 @@ void readModbus(void *pvParameters) {
 
 void remotePush(void *pvParameters){
   while(1){
-    if(modemConnect){
-      remotePush();
-      ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-    }
+    remotePush();
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
     vTaskDelay(pushDelay);
   }
 }
