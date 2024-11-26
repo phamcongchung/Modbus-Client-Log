@@ -147,8 +147,7 @@ void localLog(void *pvParameters){
 
 void checkRTC(void *pvParameters){
   while(1){
-    now = Rtc.GetDateTime();
-    getTime(now);
+    getTime();
     xTaskNotifyGive(pushTaskHandle);
     xTaskNotifyGive(logTaskHandle);
     vTaskDelay(rtcDelay);

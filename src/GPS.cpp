@@ -4,7 +4,10 @@
 #include "GPS.h"
 
 void gpsInit(){
-  gpsEn();
+  Serial.println("Enabling GPS...");
+  modem.sendAT("+CGPS=1,1");  // Start GPS in standalone mode
+  modem.waitResponse(10000L);
+  Serial.println("Waiting for GPS data...");
 }
 
 void gpsUpdate(){
@@ -15,7 +18,7 @@ void gpsUpdate(){
     // Check if the data contains invalid GPS values
     if (gpsData.indexOf(",,,,,,,,") != -1) {
       Serial.println("GPS data is invalid (no fix or no data available).");
-      errorLog("GPS data is invalid (no fix or no data available).");
+      errLog("GPS data is invalid (no fix or no data available).");
       latitude = -1; longitude = -1; altitude = -1; speed = -1;
     } else {
       Serial.println("Raw GPS Data: " + gpsData);

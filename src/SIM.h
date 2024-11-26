@@ -3,6 +3,5 @@
 
 void modemInit();
 bool modemConnect();
-void gpsEn();
 
 #endif

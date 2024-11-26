@@ -12,14 +12,22 @@ void modemInit(){
   SerialAT.begin(115200, SERIAL_8N1, SIM_RXD, SIM_TXD);
   Serial.println("Initializing modem...");
   //modem.restart();
-  if (modem.getSimStatus() == 2){
-    Serial.println("SIM PIN required.");
-    // Send the PIN to the modem
-    modem.sendAT("+CPIN=" + simPin);
-    if (modem.getSimStatus() == 1) {
+  if (modem.getSimStatus() != 1) {
+    Serial.println("SIM not ready, checking for PIN...");
+    if (modem.getSimStatus() == 2){
+      Serial.println("SIM PIN required.");
+      // Send the PIN to the modem
+      modem.sendAT("+CPIN=" + simPin);
+      delay(1000);
+      if (modem.getSimStatus() != 1) {
+        Serial.println("Failed to unlock SIM.");
+        return;
+      }
       Serial.println("SIM unlocked successfully.");
     } else {
-      Serial.println("Failed to unlock SIM.");
+      Serial.println("SIM not detected or unsupported status");
+      errLog("SIM not detected or unsupported status");
+      return;
     }
   }
   modemConnect();
@@ -30,7 +38,7 @@ bool modemConnect() {
   Serial.println(apn);
   if (!modem.gprsConnect(apn.c_str(), gprsUser.c_str(), gprsPass.c_str())) {
     Serial.println("GPRS connection failed");
-    errorLog("GPRS connection failed");
+    errLog("GPRS connection failed");
     return false;
     modem.restart();
   }
@@ -38,12 +46,4 @@ bool modemConnect() {
     Serial.println("GPRS connected");
     return true;
   }
-}
-
-void gpsEn(){
-  // Enable GPS
-  Serial.println("Enabling GPS...");
-  modem.sendAT("+CGPS=1,1");  // Start GPS in standalone mode
-  modem.waitResponse(10000L);
-  Serial.println("Waiting for GPS data...");
 }

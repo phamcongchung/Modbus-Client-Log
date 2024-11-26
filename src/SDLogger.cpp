@@ -1,4 +1,5 @@
 #include <SD.h>
+#include "RTC.h"
 #include "globals.h"
 #include "SDLogger.h"
 
@@ -64,10 +65,10 @@ void dataLog(){
   }
 }
 
-void errorLog(const char* errorMsg){
-  RtcDateTime present = Rtc.GetDateTime();
+void errLog(const char* msg){
+  String errMsg = String(getTime()) + "," + String(msg);
   File file = SD.open("/error.csv");
-  writeFile(SD, "/error.csv", errorMsg);
+  appendFile(SD, "/error.csv", errMsg.c_str());
 }
 
 void appendFile(fs::FS &fs, const char* path, const char* message){

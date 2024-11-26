@@ -74,43 +74,43 @@ void printError(int state){
   switch (mqtt.state()) {
     case MQTT_CONNECTION_TIMEOUT:
       Serial.println("connection timed out");
-      errorLog("MQTT connection timed out");
+      errLog("MQTT connection timed out");
       break;
     case MQTT_CONNECTION_LOST:
       Serial.println("connection lost");
-      errorLog("MQTT connection lost");
+      errLog("MQTT connection lost");
       break;
     case MQTT_CONNECT_FAILED:
       Serial.println("connection failed");
-      errorLog("MQTT connection failed");
+      errLog("MQTT connection failed");
       break;
     case MQTT_DISCONNECTED:
       Serial.println("disconnected");
-      errorLog("MQTT disconnected");
+      errLog("MQTT disconnected");
       break;
     case MQTT_CONNECT_BAD_PROTOCOL:
       Serial.println("bad protocol");
-      errorLog("MQTT bad protocol");
+      errLog("MQTT bad protocol");
       break;
     case MQTT_CONNECT_BAD_CLIENT_ID:
       Serial.println("bad Client ID");
-      errorLog("MQTT bad client");
+      errLog("MQTT bad client");
       break;
     case MQTT_CONNECT_UNAVAILABLE:
       Serial.println("server unavailable");
-      errorLog("MQTT server unavailable");
+      errLog("MQTT server unavailable");
       break;
     case MQTT_CONNECT_BAD_CREDENTIALS:
       Serial.println("bad username or password");
-      errorLog("MQTT bad username or password");
+      errLog("MQTT bad username or password");
       break;
     case MQTT_CONNECT_UNAUTHORIZED:
       Serial.println("unauthorized");
-      errorLog("MQTT unauthorized");
+      errLog("MQTT unauthorized");
       break;
     default:
       Serial.println("unknown error");
-      errorLog("MQTT unknown error");
+      errLog("MQTT unknown error");
       break;
   }
 }

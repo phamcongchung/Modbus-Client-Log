@@ -38,25 +38,27 @@ void rtcInit(){
     }
 }
 
-RtcDateTime getTime(const RtcDateTime& dt){
+const char* getTime(){
     if (!Rtc.GetIsRunning())
     {
         Serial.println("RTC was not actively running, starting now");
-        errorLog("RTC stopped running");
-        rtcInit();
+        init();
         Rtc.SetIsRunning(true);
     }
+    now = Rtc.GetDateTime();
     snprintf_P(dateString,
             countof(dateString),
             PSTR("%02u/%02u/%04u"),
-            dt.Month(),
-            dt.Day(),
-            dt.Year());
+            now.Month(),
+            now.Day(),
+            now.Year());
     snprintf_P(timeString,
             countof(timeString),
             PSTR("%02u:%02u:%02u"),
-            dt.Hour(),
-            dt.Minute(),
-            dt.Second());
-    return Rtc.GetDateTime();
+            now.Hour(),
+            now.Minute(),
+            now.Second());
+    char dateTimeString[40];
+    snprintf(dateTimeString, sizeof(dateTimeString), "%s %s", dateString, timeString);
+    return dateTimeString;
 }

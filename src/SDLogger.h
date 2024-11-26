@@ -5,7 +5,7 @@
 
 void sdInit();
 void dataLog();
-void errorLog(const char* errorMsg);
+void errLog(const char* errorMsg);
 void appendFile(fs::FS &fs, const char * path, const char * message);
 void writeFile(fs::FS &fs, const char * path, const char * message);
 
