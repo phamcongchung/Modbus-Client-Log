@@ -60,7 +60,12 @@ void RemoteLogger::reconnect(char macAdr[18]){
       Serial.print("Failed, ");
       mqttErr(mqtt.state());
       Serial.println("Try again in 5 seconds");
-      vTaskDelay(pdMS_TO_TICKS(5000));
+      // Ensure we don't block the system entirely
+      if (xTaskGetSchedulerState() != taskSCHEDULER_NOT_STARTED) {
+        vTaskDelay(pdMS_TO_TICKS(5000));
+      } else {
+        delay(5000);
+      }
     }
   }
 }

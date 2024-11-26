@@ -12,7 +12,8 @@
 class RemoteLogger{
 public:
     RemoteLogger(ConfigManager& config, SIM& sim, GPS& gps, RTC& rtc, ModbusCom& modbus)
-                : config(config), sim(sim), mqtt(client), gps(gps), rtc(rtc), modbus(modbus){}
+                : config(config), sim(sim), gps(gps), rtc(rtc), modbus(modbus), 
+                client(sim.getClient()), mqtt(client){}
 
     void init(char macAdr[18]);
     void push(char macAdr[18]);
@@ -25,7 +26,7 @@ private:
     ModbusCom& modbus;
     ConfigManager& config;
     PubSubClient mqtt;
-    TinyGsmClient client = sim.getClient();
+    TinyGsmClient& client;
 };
 
 void callback(char* topic, byte* message, unsigned int len);

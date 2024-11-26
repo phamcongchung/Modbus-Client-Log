@@ -10,7 +10,6 @@
 
 #define TASK_WDT_TIMEOUT 60
 
-SemaphoreHandle_t mutex;
 HardwareSerial SerialAT(1);
 ConfigManager config;
 ModbusCom modbus(config);
@@ -110,11 +109,6 @@ void localLog(void *pvParameters);
 void setup() {
   Serial.begin(115200);
 
-  // Initialize the Task Watchdog Timer
-  esp_task_wdt_init(TASK_WDT_TIMEOUT, true);
-  // Initialize mutex
-  mutex = xSemaphoreCreateMutex();
-
   // Retrieve MAC address
   esp_efuse_mac_get_default(mac);
   // Format the MAC address into the string
@@ -126,25 +120,28 @@ void setup() {
   sd.init();
   config.getNetwork();
   config.getTank();
-  vTaskDelay(pdMS_TO_TICKS(1000));
+  delay(1000);
   modbus.init();
-  vTaskDelay(pdMS_TO_TICKS(1000));
+  delay(1000);
   sim.init();
-  vTaskDelay(pdMS_TO_TICKS(1000));
+  delay(1000);
   remote.init(macAdr);
-  vTaskDelay(pdMS_TO_TICKS(1000));
+  delay(1000);
   gps.init();
-  vTaskDelay(pdMS_TO_TICKS(1000));
+  delay(1000);
   rtc.init();
-  vTaskDelay(pdMS_TO_TICKS(1000));
+  delay(1000);
   
   // Create FreeRTOS tasks
-  xTaskCreatePinnedToCore(readGPS, "Read GPS", 2048, NULL, 1, &gpsTaskHandle, pro_cpu);
-  xTaskCreatePinnedToCore(readModbus, "Read Modbus", 3072, NULL, 1, &modbusTaskHandle, app_cpu);
-  xTaskCreatePinnedToCore(checkRTC, "Check RTC", 2048, NULL, 2, &rtcTaskHandle, app_cpu);
-  xTaskCreatePinnedToCore(localLog, "Log to SD", 3072, NULL, 1, &logTaskHandle, pro_cpu);
+  xTaskCreatePinnedToCore(readGPS, "Read GPS", 3072, NULL, 1, &gpsTaskHandle, pro_cpu);
+  xTaskCreatePinnedToCore(readModbus, "Read Modbus", 3072, NULL, 1, &modbusTaskHandle, pro_cpu);
+  xTaskCreatePinnedToCore(checkRTC, "Check RTC", 2048, NULL, 2, &rtcTaskHandle, pro_cpu);
+  xTaskCreatePinnedToCore(localLog, "Log to SD", 3072, NULL, 1, &logTaskHandle, app_cpu);
   xTaskCreatePinnedToCore(remotePush, "Push to MQTT", 3072, NULL, 1, &pushTaskHandle, app_cpu);
 
+  // Initialize the Task Watchdog Timer
+  esp_task_wdt_init(TASK_WDT_TIMEOUT, true);
+  
   vTaskDelete(NULL);
 }
 
