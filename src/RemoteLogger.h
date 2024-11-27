@@ -2,6 +2,7 @@
 #define REMOTELOGGER_H
 
 #include <PubSubClient.h>
+#include <TinyGsmClient.h>
 #include "SIM.h"
 #include "GPS.h"
 #include "RTC.h"
@@ -11,22 +12,19 @@
 
 class RemoteLogger{
 public:
-    RemoteLogger(ConfigManager& config, SIM& sim, GPS& gps, RTC& rtc, ModbusCom& modbus)
-                : config(config), sim(sim), gps(gps), rtc(rtc), modbus(modbus), 
-                client(sim.getClient()), mqtt(client){}
+    RemoteLogger(ConfigManager& config, GPS& gps, RTC& rtc, ModbusCom& modbus)
+                : config(config), gps(gps), rtc(rtc), modbus(modbus){}
 
     void init(char macAdr[18]);
     void push(char macAdr[18]);
     void reconnect(char macAdr[18]);
     void mqttErr(int state);
 private:
-    SIM& sim;
     GPS& gps;
     RTC& rtc;
     ModbusCom& modbus;
     ConfigManager& config;
-    PubSubClient mqtt;
-    TinyGsmClient& client;
+    PubSubClient& mqtt;
 };
 
 void callback(char* topic, byte* message, unsigned int len);

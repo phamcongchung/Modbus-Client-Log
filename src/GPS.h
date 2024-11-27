@@ -1,11 +1,11 @@
 #ifndef GPS_H
 #define GPS_H
 
-#include "SIM.h"
+#include <TinyGsmClient.h>
 
 class GPS{
 public:
-    GPS(SIM& sim) : sim(sim){}
+    GPS(TinyGsm& modem) : modem(modem){}
 
     float latitude;
     float longitude;
@@ -13,15 +13,15 @@ public:
     String longDir;
     String altitude;
     String speed;
+    const char* err;
 
     void init();
     void update();
+private:
+    TinyGsm& modem;
     void parseData(const String& gpsData);
-    void error(const char* err);
     float coordConvert(String coord, String direction);
     String getValue(const String& data, char separator, int index);
-private:
-    SIM& sim;
 };
 
 #endif

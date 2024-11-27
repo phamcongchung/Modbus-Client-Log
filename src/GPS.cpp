@@ -1,22 +1,22 @@
+#include <Arduino.h>
 #include "GPS.h"
 
 void GPS::init(){
   // Enable GPS
   Serial.println("Enabling GPS...");
-  sim.getModem().sendAT("+CGPS=1,1");  // Start GPS in standalone mode
-  sim.getModem().waitResponse(10000L);
+  modem.sendAT("+CGPS=1,1");  // Start GPS in standalone mode
+  modem.waitResponse(10000L);
   Serial.println("Waiting for GPS data...");
 }
 
 void GPS::update(){
-  sim.getModem().sendAT("+CGPSINFO");
-  if (sim.getModem().waitResponse(10000L, "+CGPSINFO:") == 1) {
-    String gpsData = sim.getModem().stream.readStringUntil('\n');
+  modem.sendAT("+CGPSINFO");
+  if (modem.waitResponse(10000L, "+CGPSINFO:") == 1) {
+    String gpsData = modem.stream.readStringUntil('\n');
 
     // Check if the data contains invalid GPS values
     if (gpsData.indexOf(",,,,,,,,") != -1) {
-      Serial.println("GPS data is invalid (no fix or no data available).");
-      error("GPS data is invalid (no fix or no data available)");
+      err = "GPS data is invalid (no fix or no data available)";
       latitude = -1; longitude = -1; altitude = -1; speed = -1;
     } else {
       Serial.println("Raw GPS Data: " + gpsData);
@@ -25,7 +25,7 @@ void GPS::update(){
     }
     vTaskDelay(pdMS_TO_TICKS(5000));
   } else {
-    Serial.println("GPS data not available or invalid.");
+    err = "No respone from GPS";
   }
 }
 

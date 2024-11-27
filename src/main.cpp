@@ -1,29 +1,44 @@
 #include <Arduino.h>
+#include <Wire.h>
+#include <RtcDS3231.h>
 #include <esp_task_wdt.h>
 #include "ConfigManager.h"
 #include "RemoteLogger.h"
 #include "ModbusCom.h"
 #include "SDLogger.h"
-#include "SIM.h"
 #include "GPS.h"
-#include "RTC.h"
 
-#define TASK_WDT_TIMEOUT 60
+#define TASK_WDT_TIMEOUT  60
+#define SIM_RXD           32
+#define SIM_TXD           33
+#define SIM_BAUD          115200
+
+#define TINY_GSM_MODEM_SIM7600
+
+#include <TinyGsmClient.h>
 
 HardwareSerial SerialAT(1);
+PubSubClient mqtt;
+TinyGsm modem(SerialAT);
+TinyGsmClient client(modem);
+RtcDS3231<TwoWire> Rtc;
+
+GPS gps(modem);
 ConfigManager config;
 ModbusCom modbus(config);
 SIM sim(config, SerialAT);
-GPS gps(sim);
-RTC rtc(Wire);
 SDLogger sd(config, modbus, gps, rtc);
-RemoteLogger remote(config, sim, gps, rtc, modbus);
+RemoteLogger remote(config, gps, rtc, modbus, mqtt);
 
 static const BaseType_t pro_cpu = 0;
 static const BaseType_t app_cpu = 1;
 
 uint8_t mac[6];
 char macAdr[18];
+char date[20];
+char time[20];
+RtcDateTime now;
+RtcDateTime compiled;
 
 // Stores the last time an action was triggered
 unsigned long previousMillis = 0;
@@ -33,10 +48,6 @@ void GPS::error(const char* err){
 }
 
 void ModbusCom::error(const char* err){
-  sd.errLog(err);
-}
-
-void SIM::gprsErr(const char* err){
   sd.errLog(err);
 }
 
@@ -123,7 +134,28 @@ void setup() {
   delay(1000);
   modbus.init();
   delay(1000);
-  sim.init();
+
+  SerialAT.begin(SIM_BAUD, SERIAL_8N1, SIM_RXD, SIM_TXD);
+  Serial.println("Initializing modem...");
+  //modem.restart();
+  if (modem.getSimStatus() != 1) {
+    Serial.println("SIM not ready, checking for PIN...");
+    if (modem.getSimStatus() == 2){
+      Serial.println("SIM PIN required.");
+      // Send the PIN to the modem
+      modem.sendAT("+CPIN=" + config.simPin);
+      delay(1000);
+      if (modem.getSimStatus() != 1) {
+        Serial.println("Failed to unlock SIM.");
+        return;
+      }
+      Serial.println("SIM unlocked successfully.");
+    } else {
+      sd.errLog("SIM not detected or unsupported status");
+      Serial.println("SIM not detected or unsupported status");
+      return;
+    }
+  }
   delay(1000);
   remote.init(macAdr);
   delay(1000);
@@ -191,5 +223,20 @@ void checkRTC(void *pvParameters){
     xTaskNotifyGive(pushTaskHandle);
     xTaskNotifyGive(logTaskHandle);
     vTaskDelay(rtcDelay);
+  }
+}
+
+bool connect() {
+  Serial.print("Connecting to APN: ");
+  Serial.println(config.apn);
+  if (!modem.gprsConnect(config.apn.c_str(), config.gprsUser.c_str(), config.gprsPass.c_str())) {
+    sd.errLog("GPRS connection failed");
+    Serial.println("GPRS connection failed");
+    return false;
+    modem.restart();
+  }
+  else {
+    Serial.println("GPRS connected");
+    return true;
   }
 }
