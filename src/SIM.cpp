@@ -1,4 +1,4 @@
-#include <Arduino.h>
+/*#include <Arduino.h>
 #include "SIM.h"
 
 void SIM::init(){
@@ -39,4 +39,4 @@ bool SIM::connect() {
     Serial.println("GPRS connected");
     return true;
   }
-}
+}*/

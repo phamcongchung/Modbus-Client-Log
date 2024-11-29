@@ -1,27 +1,37 @@
 #ifndef GPS_H
 #define GPS_H
 
+#define TINY_GSM_MODEM_SIM7600
+
 #include <TinyGsmClient.h>
+
+enum Error{
+  OK,
+  NO_RESPONSE,
+  INVALID_DATA
+};
+
+struct Location{
+  double speed;
+  double altitude;
+  double latitude;
+  double longitude;
+};
 
 class GPS{
 public:
-    GPS(TinyGsm& modem) : modem(modem){}
+  GPS(TinyGsm& modem) : modem(modem){}
 
-    float latitude;
-    float longitude;
-    String latDir;
-    String longDir;
-    String altitude;
-    String speed;
-    const char* err;
+  Location location;
 
-    void init();
-    void update();
+  void init();
+  Location update();
+  const char* lastError();
 private:
-    TinyGsm& modem;
-    void parseData(const String& gpsData);
-    float coordConvert(String coord, String direction);
-    String getValue(const String& data, char separator, int index);
+  Error err;
+  TinyGsm& modem;
+  double coordConvert(String coord, String direction);
+  String getValue(const String& data, char separator, int index);
 };
 
 #endif

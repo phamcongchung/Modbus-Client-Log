@@ -1,4 +1,4 @@
-#ifndef RTC_H
+/*#ifndef RTC_H
 #define RTC_H
 
 #include <Wire.h>
@@ -6,17 +6,17 @@
 
 class RTC{
 public:
-    RTC(TwoWire& wire) : Rtc(wire){}
+  RTC(TwoWire& wire) : Rtc(wire){}
 
-    char date[20];
-    char time[20];
-    RtcDateTime now;
-    RtcDateTime compiled;
+  char date[20];
+  char time[20];
+  RtcDateTime now;
+  RtcDateTime compiled;
 
-    void init();
-    const char* getTime();
+  void init();
+  const char* getTime();
 private:
-    RtcDS3231<TwoWire> Rtc;
+  RtcDS3231<TwoWire> Rtc;
 };
 
-#endif
+#endif*/

@@ -3,51 +3,63 @@
 
 void GPS::init(){
   // Enable GPS
-  Serial.println("Enabling GPS...");
   modem.sendAT("+CGPS=1,1");  // Start GPS in standalone mode
   modem.waitResponse(10000L);
-  Serial.println("Waiting for GPS data...");
 }
 
-void GPS::update(){
+Location GPS::update(){
   modem.sendAT("+CGPSINFO");
   if (modem.waitResponse(10000L, "+CGPSINFO:") == 1) {
-    String gpsData = modem.stream.readStringUntil('\n');
-
+    String data = modem.stream.readStringUntil('\n');
     // Check if the data contains invalid GPS values
-    if (gpsData.indexOf(",,,,,,,,") != -1) {
-      err = "GPS data is invalid (no fix or no data available)";
-      latitude = -1; longitude = -1; altitude = -1; speed = -1;
+    if (data.indexOf(",,,,,,,,") != -1) {
+      err = INVALID_DATA;
+      location.latitude = -1;
+      location.longitude = -1;
+      location.speed = -1;
+      location.altitude = -1;
+
+      return location;
     } else {
-      Serial.println("Raw GPS Data: " + gpsData);
-      // Call a function to parse the GPS data if valid
-      parseData(gpsData);
+      err = OK;
+      String rawLat = getValue(data, ',', 0); String latDir = getValue(data, ',', 1);
+      String rawLong = getValue(data, ',', 2); String longDir = getValue(data, ',', 3);
+      location.latitude = coordConvert(rawLat, latDir);
+      location.longitude = coordConvert(rawLong, longDir);
+      location.speed = getValue(data, ',', 7).toDouble();
+      location.altitude = getValue(data, ',', 6).toDouble();
+
+      return location;
     }
-    vTaskDelay(pdMS_TO_TICKS(5000));
   } else {
-    err = "No respone from GPS";
+    err = NO_RESPONSE;
+    return;
   }
 }
 
-void GPS::parseData(const String& gpsData){
-  String rawLat = getValue(gpsData, ',', 0); latDir = getValue(gpsData, ',', 1);
-  String rawLong = getValue(gpsData, ',', 2); longDir = getValue(gpsData, ',', 3);
-  latitude = coordConvert(rawLat, latDir);
-  longitude = coordConvert(rawLong, longDir);
-  altitude = getValue(gpsData, ',', 6);
-  speed = getValue(gpsData, ',', 7);
+const char* GPS::lastError(){
+  switch (err){
+    case OK:
+      return NULL;
+    case NO_RESPONSE:
+      return "No respone from GPS";
+    case INVALID_DATA:
+      return "GPS data is invalid";
+    default:
+      return "Unknown GPS error";
+  }
 }
 
-float GPS::coordConvert(String coord, String direction){
+double GPS::coordConvert(String coord, String direction){
   // First two or three digits are degrees
   int degrees = coord.substring(0, coord.indexOf('.')).toInt() / 100;
   // Remaining digits are minutes
-  float minutes = coord.substring(coord.indexOf('.') - 2).toFloat();
+  double minutes = coord.substring(coord.indexOf('.') - 2).toFloat();
   // Convert to decimal degrees
-  float decimalDegrees = degrees + (minutes / 60);
-  // Apply direction (N/S or E/W)
+  double decimalDegrees = degrees + (minutes / 60);
+  // South and West are negative
   if (direction == "S" || direction == "W") {
-    decimalDegrees = -decimalDegrees;  // South and West are negative
+    decimalDegrees = -decimalDegrees; 
   }
   return decimalDegrees;
 }

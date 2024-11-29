@@ -1,100 +1,37 @@
 #include <Arduino.h>
+#include <SD.h>
 #include <Wire.h>
 #include <RtcDS3231.h>
+#include <ArduinoJson.h>
+#include <PubSubClient.h>
 #include <esp_task_wdt.h>
+#include <ModbusRTUClient.h>
 #include "ConfigManager.h"
-#include "RemoteLogger.h"
-#include "ModbusCom.h"
-#include "SDLogger.h"
 #include "GPS.h"
 
 #define TASK_WDT_TIMEOUT  60
 #define SIM_RXD           32
 #define SIM_TXD           33
 #define SIM_BAUD          115200
+#define RTU_BAUD          9600
 
-#define TINY_GSM_MODEM_SIM7600
-
-#include <TinyGsmClient.h>
-
-HardwareSerial SerialAT(1);
 PubSubClient mqtt;
+HardwareSerial SerialAT(1);
 TinyGsm modem(SerialAT);
 TinyGsmClient client(modem);
-RtcDS3231<TwoWire> Rtc;
-
 GPS gps(modem);
+RtcDS3231<TwoWire> Rtc;
 ConfigManager config;
-ModbusCom modbus(config);
-SIM sim(config, SerialAT);
-SDLogger sd(config, modbus, gps, rtc);
-RemoteLogger remote(config, gps, rtc, modbus, mqtt);
 
 static const BaseType_t pro_cpu = 0;
 static const BaseType_t app_cpu = 1;
 
 uint8_t mac[6];
 char macAdr[18];
-char date[20];
-char time[20];
-RtcDateTime now;
-RtcDateTime compiled;
-
-// Stores the last time an action was triggered
-unsigned long previousMillis = 0;
-
-void GPS::error(const char* err){
-  sd.errLog(err);
-}
-
-void ModbusCom::error(const char* err){
-  sd.errLog(err);
-}
-
-void RemoteLogger::mqttErr(int state){
-  switch (state) {
-    case MQTT_CONNECTION_TIMEOUT:
-      Serial.println("connection timed out");
-      sd.errLog("MQTT connection timed out");
-      break;
-    case MQTT_CONNECTION_LOST:
-      Serial.println("connection lost");
-      sd.errLog("MQTT connection lost");
-      break;
-    case MQTT_CONNECT_FAILED:
-      Serial.println("connection failed");
-      sd.errLog("MQTT connection failed");
-      break;
-    case MQTT_DISCONNECTED:
-      Serial.println("disconnected");
-      sd.errLog("MQTT disconnected");
-      break;
-    case MQTT_CONNECT_BAD_PROTOCOL:
-      Serial.println("bad protocol");
-      sd.errLog("MQTT bad protocol");
-      break;
-    case MQTT_CONNECT_BAD_CLIENT_ID:
-      Serial.println("bad Client ID");
-      sd.errLog("MQTT bad Client ID");
-      break;
-    case MQTT_CONNECT_UNAVAILABLE:
-      Serial.println("server unavailable");
-      sd.errLog("MQTT server unavailable");
-      break;
-    case MQTT_CONNECT_BAD_CREDENTIALS:
-      Serial.println("bad username or password");
-      sd.errLog("MQTT bad username or password");
-      break;
-    case MQTT_CONNECT_UNAUTHORIZED:
-      Serial.println("unauthorized");
-      sd.errLog("MQTT unauthorized");
-      break;
-    default:
-      Serial.println("unknown error");
-      sd.errLog("MQTT unknown error");
-      break;
-  }
-}
+char logString[300];
+RtcDateTime run_time, err_time, compiled;
+std::vector<ProbeData> probeData;
+const char* getTime(RtcDateTime& moment);
 
 // Task handles
 static TaskHandle_t gpsTaskHandle = NULL;
@@ -110,6 +47,10 @@ const TickType_t rtcDelay = pdMS_TO_TICKS(5000);
 const TickType_t logDelay = pdMS_TO_TICKS(5000);
 const TickType_t pushDelay = pdMS_TO_TICKS(5000);
 
+void errLog(const char* time, const char* msg);
+void callback(char* topic, byte* message, unsigned int len);
+void writeFile(fs::FS &fs, const char * path, const char * message);
+void appendFile(fs::FS &fs, const char * path, const char * message);
 // Task prototypes
 void readGPS(void *pvParameters);
 void readModbus(void *pvParameters);
@@ -128,16 +69,62 @@ void setup() {
   // Print the MAC address
   Serial.printf("ESP32 MAC Address: %s\r\n", macAdr);
 
-  sd.init();
-  config.getNetwork();
-  config.getTank();
+  // Initialize DS3231 communication
+  if (!Rtc.GetIsRunning())
+  {
+    Serial.println("RTC was not actively running, starting now");
+    Rtc.SetIsRunning(true);
+    Rtc.Begin();
+  }
+  compiled = RtcDateTime(__DATE__, __TIME__);
+  Serial.println();
+  // Disable unnecessary functions of the RTC DS3231
+  Rtc.Enable32kHzPin(false);
+  Rtc.SetSquareWavePin(DS3231SquareWavePin_ModeNone);
+  // Compare RTC time with compile time
+  if (!Rtc.IsDateTimeValid()){
+    if ((Rtc.LastError()) != 0)
+    {
+    Serial.print("RTC communication error = ");
+    Serial.println(Rtc.LastError());
+    delay(1000);
+    }
+    else
+    {
+      if (run_time < compiled)
+      {
+        Serial.println("RTC is older than compile time! (Updating DateTime)");
+        Rtc.SetDateTime(compiled);
+      }
+      else if (run_time > compiled)
+      {
+        Serial.println("RTC is newer than compiled time! (as expected)");
+      }
+      else if (run_time == compiled)
+      {
+        Serial.println("RTC is the same as compile time! (not expected but acceptable)");
+      }
+    }
+  }
+
+  if(!config.getNetwork()){
+    Serial.println(config.err);
+  }
+  if(!config.getTank()){
+    Serial.println(config.err);
+  }
   delay(1000);
-  modbus.init();
+
+  // Initialize the Modbus RTU client
+  if (!ModbusRTUClient.begin(RTU_BAUD)) {
+    Serial.println("Failed to start Modbus RTU Client!");
+  }
+  probeData.reserve(config.probeId.size());
   delay(1000);
 
   SerialAT.begin(SIM_BAUD, SERIAL_8N1, SIM_RXD, SIM_TXD);
   Serial.println("Initializing modem...");
-  //modem.restart();
+  modem.restart();
   if (modem.getSimStatus() != 1) {
     Serial.println("SIM not ready, checking for PIN...");
     if (modem.getSimStatus() == 2){
@@ -151,19 +138,71 @@ void setup() {
       }
       Serial.println("SIM unlocked successfully.");
     } else {
-      sd.errLog("SIM not detected or unsupported status");
       Serial.println("SIM not detected or unsupported status");
       return;
     }
   }
   delay(1000);
-  remote.init(macAdr);
+
+  Serial.print("Connecting to APN: ");
+  Serial.println(config.apn);
+  if (!modem.gprsConnect(config.apn.c_str(), config.gprsUser.c_str(), config.gprsPass.c_str())) {
+    Serial.println("GPRS connection failed");
+    errLog(getTime(err_time),"GPRS connection failed");
+  } else {
+    Serial.println("GPRS connected");
+  }
   delay(1000);
-  gps.init();
-  delay(1000);
-  rtc.init();
-  delay(1000);
-  
+
+  mqtt.setServer(config.broker.c_str(), config.port);
+  mqtt.setBufferSize(1024);
+  mqtt.setCallback(callback);
+
+  if(!SD.begin(5)){
+    Serial.println("Card Mount Failed");
+  }
+  uint8_t cardType = SD.cardType();
+  if(cardType == CARD_NONE){
+    Serial.println("No SD card attached");
+  }
+  // Check SD card type
+  Serial.print("SD Card Type: ");
+  if(cardType == CARD_MMC){
+    Serial.println("MMC");
+  } else if(cardType == CARD_SD){
+    Serial.println("SDSC");
+  } else if(cardType == CARD_SDHC){
+    Serial.println("SDHC");
+  } else {
+    Serial.println("UNKNOWN");
+  }
+  // Check SD card size
+  uint64_t cardSize = SD.cardSize() / (1024 * 1024);
+  Serial.printf("SD Card Size: %lluMB\n", cardSize);
+  Serial.println("");
+
+  File file = SD.open("/log.csv");
+  if(!file) {
+    Serial.println("File doens't exist");
+    Serial.println("Creating file...");
+    writeFile(SD, "/log.csv", "Date,Time,Latitude,Longitude,Speed(km/h),Altitude(m)"
+                              "Volume(l),Ullage(l),Temperature(°C)"
+                              "Product level(mm),Water level(mm)\n");
+  } else {
+    Serial.println("File already exists");  
+  }
+  file.close();
+  delay(500);
+  file = SD.open("/error.csv");
+    if(!file){
+      Serial.println("File doens't exist");
+      Serial.println("Creating file...");
+      writeFile(SD, "/error.csv", "Date,Time,Error");
+    } else {
+      Serial.println("File already exists");  
+    }
+  file.close();
+
   // Create FreeRTOS tasks
   xTaskCreatePinnedToCore(readGPS, "Read GPS", 3072, NULL, 1, &gpsTaskHandle, pro_cpu);
   xTaskCreatePinnedToCore(readModbus, "Read Modbus", 3072, NULL, 1, &modbusTaskHandle, pro_cpu);
@@ -184,6 +223,7 @@ void loop() {
 void readGPS(void *pvParameters){
   while(1){
     gps.update();
+    errLog(getTime(err_time), gps.lastError());
     xTaskNotifyGive(pushTaskHandle);
     xTaskNotifyGive(logTaskHandle);
     vTaskDelay(gpsDelay);
@@ -192,7 +232,26 @@ void readGPS(void *pvParameters){
 
 void readModbus(void *pvParameters) {
   while(1){
-    modbus.read();
+    for (size_t i = 0; i < config.probeId.size(); ++i) {
+      float* dataPointers[] = {&probeData[i].volume, &probeData[i].ullage, 
+                              &probeData[i].temperature, &probeData[i].product, 
+                              &probeData[i].water};
+      const char* labels[] = {"Volume", "Ullage", "Temperature", "Product", "Water"};
+      
+      for (size_t j = 0; j < 5; ++j) {
+        if (!ModbusRTUClient.requestFrom(config.probeId[i], HOLDING_REGISTERS, config.modbusReg[j])) {
+          Serial.printf("Failed to read %s for probe ID: %d\r\nError: ", labels[j], config.probeId[i]);
+          Serial.println(ModbusRTUClient.lastError());
+          errLog(getTime(err_time), ModbusRTUClient.lastError());
+        } else {
+          while (ModbusRTUClient.available()){
+            *dataPointers[j] = ModbusRTUClient.holdingRegisterRead<float>(
+                            config.probeId[i], config.modbusReg[j], BIGEND);
+            Serial.printf("%s: %.2f\r\n", labels[j], *dataPointers[j]);
+          }
+        }
+      }
+    }
     xTaskNotifyGive(pushTaskHandle);
     xTaskNotifyGive(logTaskHandle);
     vTaskDelay(modbusDelay);
@@ -201,17 +260,50 @@ void readModbus(void *pvParameters) {
 
 void remotePush(void *pvParameters){
   while(1){
-    if(sim.connect()){
-      remote.push(macAdr);
-      ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    if (!modem.isGprsConnected()){
+      Serial.println("GPRS connection failed");
+      errLog(getTime(err_time),"GPRS connection failed");
+    } else {
+      StaticJsonDocument<1024> data;
+      data["Device"] = macAdr;
+      data["Date/Time"] = time;
+
+      JsonObject gpsData = data.createNestedObject("Gps");
+      gpsData["Latitude"] = gps.location.latitude;
+      gpsData["Longitude"] = gps.location.longitude;
+      gpsData["Altitude"] = gps.location.altitude;
+      gpsData["Speed"] = gps.location.speed;
+
+      JsonArray measures = data.createNestedArray("Measure");
+      for(size_t i = 0; i < config.probeId.size(); i++){
+        JsonObject measure = measures.createNestedObject();
+        measure["Id"] = config.probeId[i];
+        measure["Volume"] = probeData[i].volume;
+        measure["Ullage"] = probeData[i].ullage;
+        measure["Temperature"] = probeData[i].temperature;
+        measure["ProductLevel"] = probeData[i].product;
+        measure["WaterLevel"] = probeData[i].water;
+      }
+      // Serialize JSON and publish
+      char buffer[1024];
+      size_t n = serializeJson(data, buffer);
+      mqtt.publish(config.topic.c_str(), buffer, n);
     }
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
     vTaskDelay(pushDelay);
   }
 }
 
 void localLog(void *pvParameters){
   while(1){
-    sd.log();
+    for(size_t i = 0; i < config.probeId.size(); i++){
+    String fileName = "/log" + String(i + 1) + ".csv";
+    snprintf(logString, sizeof(logString), "%s;%s;%f;%f;%s;%s;%.1f;%.1f;%.1f;%.1f;%.1f\n",
+            time, gps.location.latitude, gps.location.longitude, gps.location.speed,
+            gps.location.altitude, probeData[i].volume, probeData[i].ullage,
+            probeData[i].temperature, probeData[i].product, probeData[i].water);
+    appendFile(SD, fileName.c_str(), logString);
+    }
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
     vTaskDelay(logDelay);
   }
@@ -219,24 +311,85 @@ void localLog(void *pvParameters){
 
 void checkRTC(void *pvParameters){
   while(1){
-    rtc.getTime();
+    getTime(run_time);
     xTaskNotifyGive(pushTaskHandle);
     xTaskNotifyGive(logTaskHandle);
     vTaskDelay(rtcDelay);
   }
 }
 
-bool connect() {
-  Serial.print("Connecting to APN: ");
-  Serial.println(config.apn);
-  if (!modem.gprsConnect(config.apn.c_str(), config.gprsUser.c_str(), config.gprsPass.c_str())) {
-    sd.errLog("GPRS connection failed");
-    Serial.println("GPRS connection failed");
-    return false;
-    modem.restart();
+const char* getTime(RtcDateTime& now){
+  now = Rtc.GetDateTime();
+  char date[20];
+  char time[20];
+  char dateTime[40];
+  snprintf_P(date,
+          countof(date),
+          PSTR("%02u/%02u/%04u"),
+          now.Month(),
+          now.Day(),
+          now.Year());
+  snprintf_P(time,
+          countof(time),
+          PSTR("%02u:%02u:%02u"),
+          now.Hour(),
+          now.Minute(),
+          now.Second());
+  snprintf(dateTime, sizeof(dateTime), "%s %s", date, time);
+  return dateTime;
+}
+
+void errLog(const char* time, const char* msg){
+  String errMsg = String(time) + "," + String(msg);
+  File file = SD.open("/error.csv");
+  appendFile(SD, "/error.csv", errMsg.c_str());
+}
+
+void callback(char* topic, byte* message, unsigned int len){
+  Serial.print("Message arrived on topic: ");
+  Serial.print(topic);
+  Serial.print(". Message: ");
+  String messageTemp;
+  
+  for (int i = 0; i < len; i++) {
+    Serial.print((char)message[i]);
+    messageTemp += (char)message[i];
   }
-  else {
-    Serial.println("GPRS connected");
-    return true;
+  Serial.println();
+}
+
+void writeFile(fs::FS &fs, const char * path, const char * message) {
+  Serial.printf("Writing file: %s", path);
+
+  File file = fs.open(path, FILE_WRITE);
+  if(!file) {
+    Serial.print("Failed to open file for writing\n");
+    return;
   }
+  if(file.print(message)) {
+    Serial.print("File written\n");
+  } else {
+    Serial.print("Write failed\n");
+  }
+  file.close();
+}
+
+void appendFile(fs::FS &fs, const char* path, const char* message){
+  Serial.printf("Appending file: %s", path);
+  
+  File file = fs.open(path, FILE_APPEND);
+  if(!file){
+    Serial.print("File does not exist, creating file...\n");
+    file = fs.open(path, FILE_WRITE);  // Create the file
+    if(!file){
+      Serial.print("Failed to create file\n");
+      return;
+    }
+  }
+  if(file.print(message)){
+    Serial.print("Message appended\n");
+  } else {
+    Serial.print("Append failed\n");
+  }
+  file.close();
 }

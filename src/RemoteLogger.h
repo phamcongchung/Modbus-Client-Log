@@ -1,32 +1,28 @@
-#ifndef REMOTELOGGER_H
+/*#ifndef REMOTELOGGER_H
 #define REMOTELOGGER_H
 
 #include <PubSubClient.h>
-#include <TinyGsmClient.h>
-#include "SIM.h"
 #include "GPS.h"
 #include "RTC.h"
-#include "SDLogger.h"
 #include "ModbusCom.h"
 #include "ConfigManager.h"
 
 class RemoteLogger{
 public:
-    RemoteLogger(ConfigManager& config, GPS& gps, RTC& rtc, ModbusCom& modbus)
-                : config(config), gps(gps), rtc(rtc), modbus(modbus){}
+  RemoteLogger(ConfigManager& config, PubSubClient& mqtt)
+              : config(config), mqtt(mqtt){}
 
-    void init(char macAdr[18]);
-    void push(char macAdr[18]);
-    void reconnect(char macAdr[18]);
-    void mqttErr(int state);
+  bool connect();
+  void init(char macAdr[18]);
+  void push(Location& location, std::vector<ProbeData>& probeData, const char* time);
+  const char* lastError();
 private:
-    GPS& gps;
-    RTC& rtc;
-    ModbusCom& modbus;
-    ConfigManager& config;
-    PubSubClient& mqtt;
+  PubSubClient& mqtt;
+  ConfigManager& config;
+
+  const char* clientID;
 };
 
 void callback(char* topic, byte* message, unsigned int len);
 
-#endif
+#endif*/

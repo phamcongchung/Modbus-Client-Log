@@ -2,49 +2,49 @@
 #include <ArduinoJson.h>
 #include "ConfigManager.h"
 
-void ConfigManager::getNetwork(){
+bool ConfigManager::getNetwork(){
   File file = SD.open("/config.json");
   if (!file) {
-    Serial.println("Failed to open network config file");
-    return;
+    err = "Failed to open network config file";
+    return false;
   }
   // Allocate a JSON document
   StaticJsonDocument<128> config;
   // Parse the JSON from the file
   DeserializationError error = deserializeJson(config, file);
   if (error) {
-    Serial.print("Failed to get network config: ");
-    Serial.println(error.f_str());
-    return;
+    err = ("Failed to get network config: " + String(error.f_str())).c_str();
+    return false;
   }
   file.close();
 
   // Extract Network Configuration as String
-  apn = config["NetworkConfiguration"]["Apn"].as<String>();
-  simPin = config["NetworkConfiguration"]["SimPin"].as<String>();
-  gprsUser = config["NetworkConfiguration"]["GprsUser"].as<String>();
-  gprsPass = config["NetworkConfiguration"]["GprsPass"].as<String>();
-  topic = config["NetworkConfiguration"]["Topic"].as<String>();
-  broker = config["NetworkConfiguration"]["Broker"].as<String>();
-  brokerUser = config["NetworkConfiguration"]["BrokerUser"].as<String>();
-  brokerPass = config["NetworkConfiguration"]["BrokerPass"].as<String>();
+  apn = config["NetworkConfiguration"]["Apn"].as<String>().c_str();
+  simPin = config["NetworkConfiguration"]["SimPin"].as<String>().c_str();
+  gprsUser = config["NetworkConfiguration"]["GprsUser"].as<String>().c_str();
+  gprsPass = config["NetworkConfiguration"]["GprsPass"].as<String>().c_str();
+  topic = config["NetworkConfiguration"]["Topic"].as<String>().c_str();
+  broker = config["NetworkConfiguration"]["Broker"].as<String>().c_str();
+  brokerUser = config["NetworkConfiguration"]["BrokerUser"].as<String>().c_str();
+  brokerPass = config["NetworkConfiguration"]["BrokerPass"].as<String>().c_str();
   port = config["NetworkConfiguration"]["Port"].as<uint16_t>();
+
+  return true;
 }
 
-void ConfigManager::getTank(){
+bool ConfigManager::getTank(){
   File file = SD.open("/config.json");
   if (!file) {
-    Serial.println("Failed to open tank config file");
-    return;
+    err = "Failed to open tank config file";
+    return false;
   }
   // Allocate a JSON document
   StaticJsonDocument<512> config;
   // Parse the JSON from the file
   DeserializationError error = deserializeJson(config, file);
   if (error) {
-    Serial.print("Failed to get tank config: ");
-    Serial.println(error.f_str());
-    return;
+    err = ("Failed to get tank config: " + String(error.f_str())).c_str();
+    return false;
   }
   file.close();
 
@@ -63,4 +63,5 @@ void ConfigManager::getTank(){
     String device = tank["Device"]; Serial.println(device);
     String serialNo = tank["SerialNo"]; Serial.println(serialNo);
   }
+  return true;
 }

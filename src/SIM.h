@@ -1,4 +1,4 @@
-#ifndef SIM_H
+/*#ifndef SIM_H
 #define SIM_H
 
 #define SIM_RXD       32
@@ -31,4 +31,4 @@ private:
     TinyGsmClient client;
 };
 
-#endif
+#endif*/

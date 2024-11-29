@@ -1,4 +1,4 @@
-#include <ModbusRTUClient.h>
+/*#include <ModbusRTUClient.h>
 #include "ModbusCom.h"
 
 void ModbusCom::init(){
@@ -28,4 +28,4 @@ void ModbusCom::read(){
       }
     }
   }
-}
+}*/

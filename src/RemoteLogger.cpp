@@ -1,44 +1,35 @@
-#include <ArduinoJson.h>
+/*#include <ArduinoJson.h>
 #include "SDLogger.h"
 #include "RemoteLogger.h"
 
 void RemoteLogger::init(char macAdr[18]){
+  clientID = macAdr;
   mqtt.setServer(config.broker.c_str(), config.port);
   mqtt.setBufferSize(1024);
   mqtt.setCallback(callback);
-  if(!mqtt.connected()){
-    reconnect(macAdr);
-  }
 }
 
-void RemoteLogger::push(char macAdr[18]){
-  if(!mqtt.connected()){
-    reconnect(macAdr);
-  }
-  mqtt.loop();
-
-  // Combine date and time into a single string
-  
-  Serial.print(rtc.getTime());
+void RemoteLogger::push(Location& location, std::vector<ProbeData>& probeData,
+                        const char* time){
   StaticJsonDocument<1024> data;
-  data["Device"] = macAdr;
-  data["Date/Time"] = rtc.getTime();
+  data["Device"] = String(clientID);
+  data["Date/Time"] = time;
 
   JsonObject gpsData = data.createNestedObject("Gps");
-  gpsData["Latitude"] = gps.latitude;
-  gpsData["Longitude"] = gps.longitude;
-  gpsData["Altitude"] = gps.altitude.toFloat();
-  gpsData["Speed"] = gps.speed.toFloat();
+  gpsData["Latitude"] = location.latitude;
+  gpsData["Longitude"] = location.longitude;
+  gpsData["Altitude"] = location.altitude;
+  gpsData["Speed"] = location.speed;
 
   JsonArray measures = data.createNestedArray("Measure");
   for(size_t i = 0; i < config.probeId.size(); i++){
     JsonObject measure = measures.createNestedObject();
     measure["Id"] = config.probeId[i];
-    measure["Volume"] = modbus.probeData[i].volume;
-    measure["Ullage"] = modbus.probeData[i].ullage;
-    measure["Temperature"] = modbus.probeData[i].temperature;
-    measure["ProductLevel"] = modbus.probeData[i].product;
-    measure["WaterLevel"] = modbus.probeData[i].water;
+    measure["Volume"] = probeData[i].volume;
+    measure["Ullage"] = probeData[i].ullage;
+    measure["Temperature"] = probeData[i].temperature;
+    measure["ProductLevel"] = probeData[i].product;
+    measure["WaterLevel"] = probeData[i].water;
   }
   // Serialize JSON and publish
   char buffer[1024];
@@ -46,27 +37,60 @@ void RemoteLogger::push(char macAdr[18]){
   mqtt.publish(config.topic.c_str(), buffer, n);
 }
 
-void RemoteLogger::reconnect(char macAdr[18]){
-  // Loop until we're reconnected
-  while (!mqtt.connected()) {
-    Serial.print("Attempting MQTT connection...");
-    // Attempt to connect
-    if (mqtt.connect(macAdr, config.brokerUser.c_str(), config.brokerPass.c_str())) {
-      Serial.println("Connected");
-      // Subscribe
+bool RemoteLogger::connect(){
+  if (!mqtt.connected()) {
+    if (mqtt.connect(clientID, config.brokerUser.c_str(), config.brokerPass.c_str())) {
       mqtt.subscribe(config.topic.c_str());
-      return;
+      return true;
     } else {
-      Serial.print("Failed, ");
-      mqttErr(mqtt.state());
-      Serial.println("Try again in 5 seconds");
-      // Ensure we don't block the system entirely
-      if (xTaskGetSchedulerState() != taskSCHEDULER_NOT_STARTED) {
-        vTaskDelay(pdMS_TO_TICKS(5000));
-      } else {
-        delay(5000);
-      }
+      return false;
     }
+  }
+}
+
+const char* RemoteLogger::lastError(){
+  const char* errstr;
+  switch (mqtt.state()) {
+    case MQTT_CONNECTION_TIMEOUT:
+      errstr = "MQTT connection timeout";
+      return errstr;
+      break;
+    case MQTT_CONNECTION_LOST:
+      errstr = "MQTT connection lost";
+      return errstr;
+      break;
+    case MQTT_CONNECT_FAILED:
+      errstr = "MQTT connection failed";
+      return errstr;
+      break;
+    case MQTT_DISCONNECTED:
+      errstr = "MQTT disconnected";
+      return errstr;
+      break;
+    case MQTT_CONNECT_BAD_PROTOCOL:
+      errstr = "MQTT bad protocol";
+      return errstr;
+      break;
+    case MQTT_CONNECT_BAD_CLIENT_ID:
+      errstr = "MQTT bad Client ID";
+      return errstr;
+      break;
+    case MQTT_CONNECT_UNAVAILABLE:
+      errstr = "MQTT server unavailable";
+      return errstr;
+      break;
+    case MQTT_CONNECT_BAD_CREDENTIALS:
+      errstr = "MQTT bad username or password";
+      return errstr;
+      break;
+    case MQTT_CONNECT_UNAUTHORIZED:
+      errstr = "MQTT unauthorized";
+      return errstr;
+      break;
+    default:
+      errstr = "MQTT unknown error";
+      return errstr;
+      break;
   }
 }
 
@@ -81,4 +105,4 @@ void callback(char* topic, byte* message, unsigned int len){
     messageTemp += (char)message[i];
   }
   Serial.println();
-}
+}*/
