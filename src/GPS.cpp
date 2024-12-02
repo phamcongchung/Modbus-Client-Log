@@ -13,15 +13,12 @@ Location GPS::update(){
     String data = modem.stream.readStringUntil('\n');
     // Check if the data contains invalid GPS values
     if (data.indexOf(",,,,,,,,") != -1) {
-      err = INVALID_DATA;
-      location.latitude = -1;
-      location.longitude = -1;
-      location.speed = -1;
-      location.altitude = -1;
+      err = GPS_INVALID_DATA;
+      location = {-1, -1, -1, -1};
 
       return location;
     } else {
-      err = OK;
+      err = GPS_OK;
       String rawLat = getValue(data, ',', 0); String latDir = getValue(data, ',', 1);
       String rawLong = getValue(data, ',', 2); String longDir = getValue(data, ',', 3);
       location.latitude = coordConvert(rawLat, latDir);
@@ -32,18 +29,19 @@ Location GPS::update(){
       return location;
     }
   } else {
-    err = NO_RESPONSE;
-    return;
+    err = GPS_NO_RESPONSE;
+    location = {-1, -1, -1, -1};
+    return location;
   }
 }
 
 const char* GPS::lastError(){
   switch (err){
-    case OK:
+    case GPS_OK:
       return NULL;
-    case NO_RESPONSE:
+    case GPS_NO_RESPONSE:
       return "No respone from GPS";
-    case INVALID_DATA:
+    case GPS_INVALID_DATA:
       return "GPS data is invalid";
     default:
       return "Unknown GPS error";

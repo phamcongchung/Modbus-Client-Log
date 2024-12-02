@@ -6,9 +6,9 @@
 #include <TinyGsmClient.h>
 
 enum Error{
-  OK,
-  NO_RESPONSE,
-  INVALID_DATA
+  GPS_OK,
+  GPS_NO_RESPONSE,
+  GPS_INVALID_DATA
 };
 
 struct Location{

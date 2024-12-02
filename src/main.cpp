@@ -20,7 +20,7 @@ HardwareSerial SerialAT(1);
 TinyGsm modem(SerialAT);
 TinyGsmClient client(modem);
 GPS gps(modem);
-RtcDS3231<TwoWire> Rtc;
+RtcDS3231<TwoWire> Rtc(Wire);
 ConfigManager config;
 
 static const BaseType_t pro_cpu = 0;
@@ -32,6 +32,7 @@ char logString[300];
 RtcDateTime run_time, err_time, compiled;
 std::vector<ProbeData> probeData;
 const char* getTime(RtcDateTime& moment);
+bool rtcErr();
 
 // Task handles
 static TaskHandle_t gpsTaskHandle = NULL;
@@ -70,42 +71,35 @@ void setup() {
   Serial.printf("ESP32 MAC Address: %s\r\n", macAdr);
 
   // Initialize DS3231 communication
-  if (!Rtc.GetIsRunning())
-  {
-    Serial.println("RTC was not actively running, starting now");
-    Rtc.SetIsRunning(true);
-    Rtc.Begin();
-  }
+  Rtc.Begin();
   compiled = RtcDateTime(__DATE__, __TIME__);
   Serial.println();
+  if (!Rtc.IsDateTimeValid()){
+    if(!rtcErr()){
+      Serial.println("RTC lost confidence in the DateTime!");
+      Rtc.SetIsRunning(true);
+    }
+  }
+  if (!Rtc.GetIsRunning()){
+    if (!rtcErr()){
+      Serial.println("RTC was not actively running, starting now");
+      Rtc.SetIsRunning(true);
+    }
+  }
+  // Compare RTC time with compile time
+  if (!rtcErr()){
+    if (run_time < compiled){
+      Serial.println("RTC is older than compile time, updating DateTime");
+      Rtc.SetDateTime(compiled);
+    } else if (run_time > compiled) {
+      Serial.println("RTC is newer than compile time, this is expected");
+    } else if (run_time == compiled) {
+      Serial.println("RTC is the same as compile time, while not expected all is still fine");
+    }
+  }
   // Disable unnecessary functions of the RTC DS3231
   Rtc.Enable32kHzPin(false);
   Rtc.SetSquareWavePin(DS3231SquareWavePin_ModeNone);
-  // Compare RTC time with compile time
-  if (!Rtc.IsDateTimeValid()){
-    if ((Rtc.LastError()) != 0)
-    {
-    Serial.print("RTC communication error = ");
-    Serial.println(Rtc.LastError());
-    delay(1000);
-    }
-    else
-    {
-      if (run_time < compiled)
-      {
-        Serial.println("RTC is older than compile time! (Updating DateTime)");
-        Rtc.SetDateTime(compiled);
-      }
-      else if (run_time > compiled)
-      {
-        Serial.println("RTC is newer than compiled time! (as expected)");
-      }
-      else if (run_time == compiled)
-      {
-        Serial.println("RTC is the same as compile time! (not expected but acceptable)");
-      }
-    }
-  }
 
   if(!config.getNetwork()){
     Serial.println(config.err);
@@ -124,7 +118,9 @@ void setup() {
 
   SerialAT.begin(SIM_BAUD, SERIAL_8N1, SIM_RXD, SIM_TXD);
   Serial.println("Initializing modem...");
-  modem.restart();
+  if(!modem.init()){
+    modem.restart();
+  }
   if (modem.getSimStatus() != 1) {
     Serial.println("SIM not ready, checking for PIN...");
     if (modem.getSimStatus() == 2){
@@ -311,6 +307,12 @@ void localLog(void *pvParameters){
 
 void checkRTC(void *pvParameters){
   while(1){
+    if (!Rtc.IsDateTimeValid()){
+      if(!rtcErr()){
+        Serial.println("RTC lost confidence in the DateTime!");
+        Rtc.SetIsRunning(true);
+      }
+    }
     getTime(run_time);
     xTaskNotifyGive(pushTaskHandle);
     xTaskNotifyGive(logTaskHandle);
@@ -337,6 +339,36 @@ const char* getTime(RtcDateTime& now){
           now.Second());
   snprintf(dateTime, sizeof(dateTime), "%s %s", date, time);
   return dateTime;
+}
+
+bool rtcErr(){
+  uint8_t error = Rtc.LastError();
+  if (error != 0){
+    Serial.print("WIRE communications error: ");
+    switch (error)
+    {
+    case Rtc_Wire_Error_None:
+      Serial.println("(none?!)");
+      break;
+    case Rtc_Wire_Error_TxBufferOverflow:
+      Serial.println("transmit buffer overflow");
+      break;
+    case Rtc_Wire_Error_NoAddressableDevice:
+      Serial.println("no device responded");
+      break;
+    case Rtc_Wire_Error_UnsupportedRequest:
+      Serial.println("device doesn't support request");
+      break;
+    case Rtc_Wire_Error_Unspecific:
+      Serial.println("unspecified error");
+      break;
+    case Rtc_Wire_Error_CommunicationTimeout:
+      Serial.println("communications timed out");
+      break;
+    }
+    return true;
+  }
+  return false;
 }
 
 void errLog(const char* time, const char* msg){
