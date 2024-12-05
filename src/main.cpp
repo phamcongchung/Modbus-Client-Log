@@ -28,10 +28,10 @@ static const BaseType_t app_cpu = 1;
 
 uint8_t mac[6];
 char macAdr[18];
-char logString[300];
+char dateTime[40];
+char logString[400];
 RtcDateTime run_time, err_time, compiled;
 std::vector<ProbeData> probeData;
-const char* getTime(RtcDateTime& moment);
 bool rtcErr();
 
 // Task handles
@@ -48,7 +48,8 @@ const TickType_t rtcDelay = pdMS_TO_TICKS(5000);
 const TickType_t logDelay = pdMS_TO_TICKS(5000);
 const TickType_t pushDelay = pdMS_TO_TICKS(5000);
 
-void errLog(const char* time, const char* msg);
+String getTime(RtcDateTime& now);
+void errLog(String time, const char* msg);
 void callback(char* topic, byte* message, unsigned int len);
 void writeFile(fs::FS &fs, const char * path, const char * message);
 void appendFile(fs::FS &fs, const char * path, const char * message);
@@ -100,7 +101,31 @@ void setup() {
   // Disable unnecessary functions of the RTC DS3231
   Rtc.Enable32kHzPin(false);
   Rtc.SetSquareWavePin(DS3231SquareWavePin_ModeNone);
+  delay(1000);
 
+  if(!SD.begin(5)){
+    Serial.println("Card Mount Failed");
+  }
+  uint8_t cardType = SD.cardType();
+  if(cardType == CARD_NONE){
+    Serial.println("No SD card attached");
+  }
+  // Check SD card type
+  Serial.print("SD Card Type: ");
+  if(cardType == CARD_MMC){
+    Serial.println("MMC");
+  } else if(cardType == CARD_SD){
+    Serial.println("SDSC");
+  } else if(cardType == CARD_SDHC){
+    Serial.println("SDHC");
+  } else {
+    Serial.println("UNKNOWN");
+  }
+  // Check SD card size
+  uint64_t cardSize = SD.cardSize() / (1024 * 1024);
+  Serial.printf("SD Card Size: %lluMB\n", cardSize);
+  Serial.println("");
+  
   if(!config.getNetwork()){
     Serial.println(config.err);
   }
@@ -108,6 +133,8 @@ void setup() {
     Serial.println(config.err);
   }
   delay(1000);
+
+  gps.init();
 
   // Initialize the Modbus RTU client
   if (!ModbusRTUClient.begin(RTU_BAUD)) {
@@ -154,29 +181,6 @@ void setup() {
   mqtt.setBufferSize(1024);
   mqtt.setCallback(callback);
 
-  if(!SD.begin(5)){
-    Serial.println("Card Mount Failed");
-  }
-  uint8_t cardType = SD.cardType();
-  if(cardType == CARD_NONE){
-    Serial.println("No SD card attached");
-  }
-  // Check SD card type
-  Serial.print("SD Card Type: ");
-  if(cardType == CARD_MMC){
-    Serial.println("MMC");
-  } else if(cardType == CARD_SD){
-    Serial.println("SDSC");
-  } else if(cardType == CARD_SDHC){
-    Serial.println("SDHC");
-  } else {
-    Serial.println("UNKNOWN");
-  }
-  // Check SD card size
-  uint64_t cardSize = SD.cardSize() / (1024 * 1024);
-  Serial.printf("SD Card Size: %lluMB\n", cardSize);
-  Serial.println("");
-
   File file = SD.open("/log.csv");
   if(!file) {
     Serial.println("File doens't exist");
@@ -203,8 +207,8 @@ void setup() {
   xTaskCreatePinnedToCore(readGPS, "Read GPS", 3072, NULL, 1, &gpsTaskHandle, pro_cpu);
   xTaskCreatePinnedToCore(readModbus, "Read Modbus", 3072, NULL, 1, &modbusTaskHandle, pro_cpu);
   xTaskCreatePinnedToCore(checkRTC, "Check RTC", 2048, NULL, 2, &rtcTaskHandle, pro_cpu);
-  xTaskCreatePinnedToCore(localLog, "Log to SD", 3072, NULL, 1, &logTaskHandle, app_cpu);
-  xTaskCreatePinnedToCore(remotePush, "Push to MQTT", 3072, NULL, 1, &pushTaskHandle, app_cpu);
+  xTaskCreatePinnedToCore(localLog, "Log to SD", 8000, NULL, 1, &logTaskHandle, app_cpu);
+  xTaskCreatePinnedToCore(remotePush, "Push to MQTT", 5012, NULL, 1, &pushTaskHandle, app_cpu);
 
   // Initialize the Task Watchdog Timer
   esp_task_wdt_init(TASK_WDT_TIMEOUT, true);
@@ -220,6 +224,7 @@ void readGPS(void *pvParameters){
   while(1){
     gps.update();
     errLog(getTime(err_time), gps.lastError());
+    getTime(run_time);
     xTaskNotifyGive(pushTaskHandle);
     xTaskNotifyGive(logTaskHandle);
     vTaskDelay(gpsDelay);
@@ -262,7 +267,7 @@ void remotePush(void *pvParameters){
     } else {
       StaticJsonDocument<1024> data;
       data["Device"] = macAdr;
-      data["Date/Time"] = time;
+      data["Date/Time"] = dateTime;
 
       JsonObject gpsData = data.createNestedObject("Gps");
       gpsData["Latitude"] = gps.location.latitude;
@@ -293,12 +298,14 @@ void remotePush(void *pvParameters){
 void localLog(void *pvParameters){
   while(1){
     for(size_t i = 0; i < config.probeId.size(); i++){
-    String fileName = "/log" + String(i + 1) + ".csv";
-    snprintf(logString, sizeof(logString), "%s;%s;%f;%f;%s;%s;%.1f;%.1f;%.1f;%.1f;%.1f\n",
-            time, gps.location.latitude, gps.location.longitude, gps.location.speed,
-            gps.location.altitude, probeData[i].volume, probeData[i].ullage,
-            probeData[i].temperature, probeData[i].product, probeData[i].water);
-    appendFile(SD, fileName.c_str(), logString);
+      char fileName[10];
+      snprintf(fileName, sizeof(fileName), "/log%d.csv", i + 1);
+
+      snprintf(logString, sizeof(logString), "%s;%.1f;%.1f;%.1f;%.1f;%.1f;%.1f;%.1f;%.1f;%.1f\n",
+              dateTime, gps.location.latitude, gps.location.longitude, gps.location.speed,
+              gps.location.altitude, probeData[i].volume, probeData[i].ullage,
+              probeData[i].temperature, probeData[i].product, probeData[i].water);
+      appendFile(SD, fileName, logString);
     }
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
     vTaskDelay(logDelay);
@@ -312,33 +319,27 @@ void checkRTC(void *pvParameters){
         Serial.println("RTC lost confidence in the DateTime!");
         Rtc.SetIsRunning(true);
       }
+      snprintf(dateTime, sizeof(dateTime), "%s", getTime(run_time));
     }
-    getTime(run_time);
     xTaskNotifyGive(pushTaskHandle);
     xTaskNotifyGive(logTaskHandle);
     vTaskDelay(rtcDelay);
   }
 }
 
-const char* getTime(RtcDateTime& now){
+String getTime(RtcDateTime& now){
   now = Rtc.GetDateTime();
-  char date[20];
-  char time[20];
-  char dateTime[40];
-  snprintf_P(date,
-          countof(date),
-          PSTR("%02u/%02u/%04u"),
-          now.Month(),
-          now.Day(),
-          now.Year());
+  char time[40];
   snprintf_P(time,
-          countof(time),
-          PSTR("%02u:%02u:%02u"),
-          now.Hour(),
-          now.Minute(),
-          now.Second());
-  snprintf(dateTime, sizeof(dateTime), "%s %s", date, time);
-  return dateTime;
+            countof(time),
+            PSTR("%02u/%02u/%04u %02u:%02u:%02u"),
+            now.Month(),
+            now.Day(),
+            now.Year(),
+            now.Hour(),
+            now.Minute(),
+            now.Second());
+  return String(time);
 }
 
 bool rtcErr(){
@@ -371,7 +372,7 @@ bool rtcErr(){
   return false;
 }
 
-void errLog(const char* time, const char* msg){
+void errLog(String time, const char* msg){
   String errMsg = String(time) + "," + String(msg);
   File file = SD.open("/error.csv");
   appendFile(SD, "/error.csv", errMsg.c_str());
