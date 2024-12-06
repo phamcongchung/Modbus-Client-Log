@@ -171,7 +171,7 @@ void setup() {
   Serial.println(config.apn);
   if (!modem.gprsConnect(config.apn.c_str(), config.gprsUser.c_str(), config.gprsPass.c_str())) {
     Serial.println("GPRS connection failed");
-    errLog(getTime(err_time),"GPRS connection failed");
+    //errLog(getTime(err_time),"GPRS connection failed");
   } else {
     Serial.println("GPRS connected");
   }
@@ -207,8 +207,8 @@ void setup() {
   xTaskCreatePinnedToCore(readGPS, "Read GPS", 3072, NULL, 1, &gpsTaskHandle, pro_cpu);
   xTaskCreatePinnedToCore(readModbus, "Read Modbus", 3072, NULL, 1, &modbusTaskHandle, pro_cpu);
   xTaskCreatePinnedToCore(checkRTC, "Check RTC", 2048, NULL, 2, &rtcTaskHandle, pro_cpu);
-  xTaskCreatePinnedToCore(localLog, "Log to SD", 8000, NULL, 1, &logTaskHandle, app_cpu);
-  xTaskCreatePinnedToCore(remotePush, "Push to MQTT", 5012, NULL, 1, &pushTaskHandle, app_cpu);
+  xTaskCreatePinnedToCore(localLog, "Log to SD", 3072, NULL, 1, &logTaskHandle, app_cpu);
+  xTaskCreatePinnedToCore(remotePush, "Push to MQTT", 3072, NULL, 1, &pushTaskHandle, app_cpu);
 
   // Initialize the Task Watchdog Timer
   esp_task_wdt_init(TASK_WDT_TIMEOUT, true);
@@ -222,8 +222,10 @@ void loop() {
 
 void readGPS(void *pvParameters){
   while(1){
+    Serial.println("readGPS running");
     gps.update();
-    errLog(getTime(err_time), gps.lastError());
+    Serial.println(gps.lastError());
+    //errLog(getTime(err_time), gps.lastError());
     getTime(run_time);
     xTaskNotifyGive(pushTaskHandle);
     xTaskNotifyGive(logTaskHandle);
@@ -233,6 +235,7 @@ void readGPS(void *pvParameters){
 
 void readModbus(void *pvParameters) {
   while(1){
+    Serial.println("readModbus running");
     for (size_t i = 0; i < config.probeId.size(); ++i) {
       float* dataPointers[] = {&probeData[i].volume, &probeData[i].ullage, 
                               &probeData[i].temperature, &probeData[i].product, 
@@ -240,16 +243,15 @@ void readModbus(void *pvParameters) {
       const char* labels[] = {"Volume", "Ullage", "Temperature", "Product", "Water"};
       
       for (size_t j = 0; j < 5; ++j) {
-        if (!ModbusRTUClient.requestFrom(config.probeId[i], HOLDING_REGISTERS, config.modbusReg[j])) {
-          Serial.printf("Failed to read %s for probe ID: %d\r\nError: ", labels[j], config.probeId[i]);
-          Serial.println(ModbusRTUClient.lastError());
-          errLog(getTime(err_time), ModbusRTUClient.lastError());
-        } else {
-          while (ModbusRTUClient.available()){
-            *dataPointers[j] = ModbusRTUClient.holdingRegisterRead<float>(
-                            config.probeId[i], config.modbusReg[j], BIGEND);
+          *dataPointers[j] = ModbusRTUClient.holdingRegisterRead<float>(
+                              config.probeId[i], config.modbusReg[j], BIGEND);
+          if (*dataPointers[j] < 0) {
+            Serial.printf("Failed to read %s for probe ID: %d\r\nError: ", labels[j], config.probeId[i]);
+            Serial.println(ModbusRTUClient.lastError());
+            //errLog(getTime(err_time), ModbusRTUClient.lastError());
+          } else {
             Serial.printf("%s: %.2f\r\n", labels[j], *dataPointers[j]);
-          }
+          
         }
       }
     }
@@ -261,9 +263,21 @@ void readModbus(void *pvParameters) {
 
 void remotePush(void *pvParameters){
   while(1){
+    Serial.println("remotePush running");
     if (!modem.isGprsConnected()){
       Serial.println("GPRS connection failed");
-      errLog(getTime(err_time),"GPRS connection failed");
+      //errLog(getTime(err_time),"GPRS connection failed");
+    } else if (!mqtt.connected()){
+      Serial.print("Attempting MQTT connection...");
+      // Attempt to connect
+      if (mqtt.connect(macAdr, config.brokerUser.c_str(), config.brokerPass.c_str())){
+        Serial.println("Connected");
+        // Subscribe
+        mqtt.subscribe(config.topic.c_str());
+        return;
+      } else {
+        Serial.println("Failed, try again in 5 seconds");
+      }
     } else {
       StaticJsonDocument<1024> data;
       data["Device"] = macAdr;
@@ -297,6 +311,7 @@ void remotePush(void *pvParameters){
 
 void localLog(void *pvParameters){
   while(1){
+    Serial.println("localLog running");
     for(size_t i = 0; i < config.probeId.size(); i++){
       char fileName[10];
       snprintf(fileName, sizeof(fileName), "/log%d.csv", i + 1);
@@ -392,37 +407,37 @@ void callback(char* topic, byte* message, unsigned int len){
 }
 
 void writeFile(fs::FS &fs, const char * path, const char * message) {
-  Serial.printf("Writing file: %s", path);
+  Serial.printf("Writing file: %s\n", path);
 
   File file = fs.open(path, FILE_WRITE);
   if(!file) {
-    Serial.print("Failed to open file for writing\n");
+    Serial.println("Failed to open file for writing");
     return;
   }
   if(file.print(message)) {
-    Serial.print("File written\n");
+    Serial.println("File written");
   } else {
-    Serial.print("Write failed\n");
+    Serial.println("Write failed");
   }
   file.close();
 }
 
 void appendFile(fs::FS &fs, const char* path, const char* message){
-  Serial.printf("Appending file: %s", path);
+  Serial.printf("Appending file: %s\n", path);
   
   File file = fs.open(path, FILE_APPEND);
   if(!file){
-    Serial.print("File does not exist, creating file...\n");
+    Serial.println("File does not exist, creating file...");
     file = fs.open(path, FILE_WRITE);  // Create the file
     if(!file){
-      Serial.print("Failed to create file\n");
+      Serial.println("Failed to create file");
       return;
     }
   }
   if(file.print(message)){
-    Serial.print("Message appended\n");
+    Serial.println("Message appended");
   } else {
-    Serial.print("Append failed\n");
+    Serial.println("Append failed");
   }
   file.close();
 }
