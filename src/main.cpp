@@ -15,24 +15,29 @@
 #define SIM_BAUD          115200
 #define RTU_BAUD          9600
 
-PubSubClient mqtt;
 HardwareSerial SerialAT(1);
 TinyGsm modem(SerialAT);
 TinyGsmClient client(modem);
 GPS gps(modem);
-RtcDS3231<TwoWire> Rtc(Wire);
+PubSubClient mqtt(client);
 ConfigManager config;
+RtcDS3231<TwoWire> Rtc(Wire);
 
 static const BaseType_t pro_cpu = 0;
 static const BaseType_t app_cpu = 1;
 
 uint8_t mac[6];
+String dateTime;
 char macAdr[18];
-char dateTime[40];
-char logString[400];
-RtcDateTime run_time, err_time, compiled;
+char logString[300];
 std::vector<ProbeData> probeData;
+RtcDateTime run_time, err_time, compiled;
+
 bool rtcErr();
+void errLog(String time, const char* msg);
+void callback(char* topic, byte* message, unsigned int len);
+void appendFile(fs::FS &fs, const char * path, const char * message);
+String getTime();
 
 // Task handles
 static TaskHandle_t gpsTaskHandle = NULL;
@@ -48,11 +53,6 @@ const TickType_t rtcDelay = pdMS_TO_TICKS(5000);
 const TickType_t logDelay = pdMS_TO_TICKS(5000);
 const TickType_t pushDelay = pdMS_TO_TICKS(5000);
 
-String getTime(RtcDateTime& now);
-void errLog(String time, const char* msg);
-void callback(char* topic, byte* message, unsigned int len);
-void writeFile(fs::FS &fs, const char * path, const char * message);
-void appendFile(fs::FS &fs, const char * path, const char * message);
 // Task prototypes
 void readGPS(void *pvParameters);
 void readModbus(void *pvParameters);
@@ -181,28 +181,6 @@ void setup() {
   mqtt.setBufferSize(1024);
   mqtt.setCallback(callback);
 
-  File file = SD.open("/log.csv");
-  if(!file) {
-    Serial.println("File doens't exist");
-    Serial.println("Creating file...");
-    writeFile(SD, "/log.csv", "Date,Time,Latitude,Longitude,Speed(km/h),Altitude(m)"
-                              "Volume(l),Ullage(l),Temperature(°C)"
-                              "Product level(mm),Water level(mm)\n");
-  } else {
-    Serial.println("File already exists");  
-  }
-  file.close();
-  delay(500);
-  file = SD.open("/error.csv");
-    if(!file){
-      Serial.println("File doens't exist");
-      Serial.println("Creating file...");
-      writeFile(SD, "/error.csv", "Date,Time,Error");
-    } else {
-      Serial.println("File already exists");  
-    }
-  file.close();
-
   // Create FreeRTOS tasks
   xTaskCreatePinnedToCore(readGPS, "Read GPS", 3072, NULL, 1, &gpsTaskHandle, pro_cpu);
   xTaskCreatePinnedToCore(readModbus, "Read Modbus", 3072, NULL, 1, &modbusTaskHandle, pro_cpu);
@@ -222,11 +200,9 @@ void loop() {
 
 void readGPS(void *pvParameters){
   while(1){
-    Serial.println("readGPS running");
     gps.update();
     Serial.println(gps.lastError());
     //errLog(getTime(err_time), gps.lastError());
-    getTime(run_time);
     xTaskNotifyGive(pushTaskHandle);
     xTaskNotifyGive(logTaskHandle);
     vTaskDelay(gpsDelay);
@@ -235,25 +211,24 @@ void readGPS(void *pvParameters){
 
 void readModbus(void *pvParameters) {
   while(1){
-    Serial.println("readModbus running");
     for (size_t i = 0; i < config.probeId.size(); ++i) {
       float* dataPointers[] = {&probeData[i].volume, &probeData[i].ullage, 
                               &probeData[i].temperature, &probeData[i].product, 
                               &probeData[i].water};
       const char* labels[] = {"Volume", "Ullage", "Temperature", "Product", "Water"};
-      
+      Serial.printf("Probe number %d:\n", config.probeId[i]);
       for (size_t j = 0; j < 5; ++j) {
-          *dataPointers[j] = ModbusRTUClient.holdingRegisterRead<float>(
-                              config.probeId[i], config.modbusReg[j], BIGEND);
-          if (*dataPointers[j] < 0) {
-            Serial.printf("Failed to read %s for probe ID: %d\r\nError: ", labels[j], config.probeId[i]);
-            Serial.println(ModbusRTUClient.lastError());
-            //errLog(getTime(err_time), ModbusRTUClient.lastError());
-          } else {
-            Serial.printf("%s: %.2f\r\n", labels[j], *dataPointers[j]);
-          
+        *dataPointers[j] = ModbusRTUClient.holdingRegisterRead<float>(
+                            config.probeId[i], config.modbusReg[j], BIGEND);
+        if (*dataPointers[j] < 0) {
+          Serial.printf("Failed to read %s for probe ID: %d\r\nError: ", labels[j], config.probeId[i]);
+          Serial.println(ModbusRTUClient.lastError());
+          //errLog(getTime(err_time), ModbusRTUClient.lastError());
+        } else {
+          Serial.printf("%s: %.2f, ", labels[j], *dataPointers[j]);
         }
       }
+      Serial.print("\n");
     }
     xTaskNotifyGive(pushTaskHandle);
     xTaskNotifyGive(logTaskHandle);
@@ -263,18 +238,15 @@ void readModbus(void *pvParameters) {
 
 void remotePush(void *pvParameters){
   while(1){
-    Serial.println("remotePush running");
     if (!modem.isGprsConnected()){
       Serial.println("GPRS connection failed");
       //errLog(getTime(err_time),"GPRS connection failed");
     } else if (!mqtt.connected()){
       Serial.print("Attempting MQTT connection...");
-      // Attempt to connect
       if (mqtt.connect(macAdr, config.brokerUser.c_str(), config.brokerPass.c_str())){
         Serial.println("Connected");
         // Subscribe
         mqtt.subscribe(config.topic.c_str());
-        return;
       } else {
         Serial.println("Failed, try again in 5 seconds");
       }
@@ -311,7 +283,6 @@ void remotePush(void *pvParameters){
 
 void localLog(void *pvParameters){
   while(1){
-    Serial.println("localLog running");
     for(size_t i = 0; i < config.probeId.size(); i++){
       char fileName[10];
       snprintf(fileName, sizeof(fileName), "/log%d.csv", i + 1);
@@ -334,27 +305,61 @@ void checkRTC(void *pvParameters){
         Serial.println("RTC lost confidence in the DateTime!");
         Rtc.SetIsRunning(true);
       }
-      snprintf(dateTime, sizeof(dateTime), "%s", getTime(run_time));
     }
+    dateTime = getTime();
     xTaskNotifyGive(pushTaskHandle);
     xTaskNotifyGive(logTaskHandle);
     vTaskDelay(rtcDelay);
   }
 }
 
-String getTime(RtcDateTime& now){
-  now = Rtc.GetDateTime();
+String getTime(){
   char time[40];
-  snprintf_P(time,
-            countof(time),
+  RtcDateTime now = Rtc.GetDateTime();
+  snprintf_P(time, countof(time),
             PSTR("%02u/%02u/%04u %02u:%02u:%02u"),
-            now.Month(),
-            now.Day(),
-            now.Year(),
-            now.Hour(),
-            now.Minute(),
-            now.Second());
+            now.Month(),now.Day(), now.Year(),
+            now.Hour(), now.Minute(), now.Second());
   return String(time);
+}
+
+void errLog(String time, const char* msg){
+  String errMsg = String(time) + "," + String(msg);
+  File file = SD.open("/error.csv");
+  appendFile(SD, "/error.csv", errMsg.c_str());
+}
+
+void callback(char* topic, byte* message, unsigned int len){
+  Serial.print("Message arrived on topic: ");
+  Serial.print(topic);
+  Serial.print(". Message: ");
+  String messageTemp;
+  
+  for (int i = 0; i < len; i++) {
+    Serial.print((char)message[i]);
+    messageTemp += (char)message[i];
+  }
+  Serial.println();
+}
+
+void appendFile(fs::FS &fs, const char* path, const char* message){
+  Serial.printf("Appending file: %s...", path);
+  
+  File file = fs.open(path, FILE_APPEND);
+  if(!file){
+    Serial.print("File does not exist, creating file...");
+    file = fs.open(path, FILE_WRITE);  // Create the file
+    if(!file){
+      Serial.println("Failed to create file");
+      return;
+    }
+  }
+  if(file.print(message)){
+    Serial.println("Message appended");
+  } else {
+    Serial.println("Append failed");
+  }
+  file.close();
 }
 
 bool rtcErr(){
@@ -385,59 +390,4 @@ bool rtcErr(){
     return true;
   }
   return false;
-}
-
-void errLog(String time, const char* msg){
-  String errMsg = String(time) + "," + String(msg);
-  File file = SD.open("/error.csv");
-  appendFile(SD, "/error.csv", errMsg.c_str());
-}
-
-void callback(char* topic, byte* message, unsigned int len){
-  Serial.print("Message arrived on topic: ");
-  Serial.print(topic);
-  Serial.print(". Message: ");
-  String messageTemp;
-  
-  for (int i = 0; i < len; i++) {
-    Serial.print((char)message[i]);
-    messageTemp += (char)message[i];
-  }
-  Serial.println();
-}
-
-void writeFile(fs::FS &fs, const char * path, const char * message) {
-  Serial.printf("Writing file: %s\n", path);
-
-  File file = fs.open(path, FILE_WRITE);
-  if(!file) {
-    Serial.println("Failed to open file for writing");
-    return;
-  }
-  if(file.print(message)) {
-    Serial.println("File written");
-  } else {
-    Serial.println("Write failed");
-  }
-  file.close();
-}
-
-void appendFile(fs::FS &fs, const char* path, const char* message){
-  Serial.printf("Appending file: %s\n", path);
-  
-  File file = fs.open(path, FILE_APPEND);
-  if(!file){
-    Serial.println("File does not exist, creating file...");
-    file = fs.open(path, FILE_WRITE);  // Create the file
-    if(!file){
-      Serial.println("Failed to create file");
-      return;
-    }
-  }
-  if(file.print(message)){
-    Serial.println("Message appended");
-  } else {
-    Serial.println("Append failed");
-  }
-  file.close();
 }
