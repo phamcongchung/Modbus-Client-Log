@@ -27,17 +27,17 @@ static const BaseType_t pro_cpu = 0;
 static const BaseType_t app_cpu = 1;
 
 uint8_t mac[6];
-String dateTime;
 char macAdr[18];
+char dateTime[20];
 char logString[300];
+RtcDateTime run_time, compiled;
 std::vector<ProbeData> probeData;
-RtcDateTime run_time, err_time, compiled;
 
 bool rtcErr();
-void errLog(String time, const char* msg);
+void getTime(char* buffer);
+void errLog(const char* msg);
 void callback(char* topic, byte* message, unsigned int len);
 void appendFile(fs::FS &fs, const char * path, const char * message);
-String getTime();
 
 // Task handles
 static TaskHandle_t gpsTaskHandle = NULL;
@@ -46,9 +46,16 @@ static TaskHandle_t rtcTaskHandle = NULL;
 static TaskHandle_t pushTaskHandle = NULL;
 static TaskHandle_t logTaskHandle = NULL;
 
+/*TickType_t gpsLastWake = xTaskGetTickCount();
+TickType_t modbusLastWake = xTaskGetTickCount();
+TickType_t rtcLastWake = xTaskGetTickCount();
+TickType_t remoteLastWake = xTaskGetTickCount();
+TickType_t localLastWake = xTaskGetTickCount();
+const TickType_t interval = pdMS_TO_TICKS(5000);
+const TickType_t modbus_interval = pdMS_TO_TICKS(10000);*/
 // Task delay times
 const TickType_t gpsDelay = pdMS_TO_TICKS(5000);
-const TickType_t modbusDelay = pdMS_TO_TICKS(5000);
+const TickType_t modbusDelay = pdMS_TO_TICKS(10000);
 const TickType_t rtcDelay = pdMS_TO_TICKS(5000);
 const TickType_t logDelay = pdMS_TO_TICKS(5000);
 const TickType_t pushDelay = pdMS_TO_TICKS(5000);
@@ -88,6 +95,7 @@ void setup() {
     }
   }
   // Compare RTC time with compile time
+  run_time = Rtc.GetDateTime();
   if (!rtcErr()){
     if (run_time < compiled){
       Serial.println("RTC is older than compile time, updating DateTime");
@@ -127,25 +135,17 @@ void setup() {
   Serial.println("");
   
   if(!config.getNetwork()){
-    Serial.println(config.err);
+    Serial.println(config.lastError);
   }
   if(!config.getTank()){
-    Serial.println(config.err);
+    Serial.println(config.lastError);
   }
-  delay(1000);
-
-  gps.init();
-
-  // Initialize the Modbus RTU client
-  if (!ModbusRTUClient.begin(RTU_BAUD)) {
-    Serial.println("Failed to start Modbus RTU Client!");
-  }
-  probeData.reserve(config.probeId.size());
   delay(1000);
 
   SerialAT.begin(SIM_BAUD, SERIAL_8N1, SIM_RXD, SIM_TXD);
   Serial.println("Initializing modem...");
   if(!modem.init()){
+    Serial.println("Restarting modem...");
     modem.restart();
   }
   if (modem.getSimStatus() != 1) {
@@ -167,19 +167,17 @@ void setup() {
   }
   delay(1000);
 
-  Serial.print("Connecting to APN: ");
-  Serial.println(config.apn);
-  if (!modem.gprsConnect(config.apn.c_str(), config.gprsUser.c_str(), config.gprsPass.c_str())) {
-    Serial.println("GPRS connection failed");
-    //errLog(getTime(err_time),"GPRS connection failed");
-  } else {
-    Serial.println("GPRS connected");
-  }
-  delay(1000);
-
+  // Initialize GPS
+  gps.init();
+  // Initialize the Modbus RTU client
+  ModbusRTUClient.begin(RTU_BAUD);
+  probeData.reserve(config.probeId.size());
+  delay(500);
+  // Initialize MQTT
   mqtt.setServer(config.broker.c_str(), config.port);
   mqtt.setBufferSize(1024);
   mqtt.setCallback(callback);
+  delay(500);
 
   // Create FreeRTOS tasks
   xTaskCreatePinnedToCore(readGPS, "Read GPS", 3072, NULL, 1, &gpsTaskHandle, pro_cpu);
@@ -190,7 +188,6 @@ void setup() {
 
   // Initialize the Task Watchdog Timer
   esp_task_wdt_init(TASK_WDT_TIMEOUT, true);
-  
   vTaskDelete(NULL);
 }
 
@@ -206,6 +203,7 @@ void readGPS(void *pvParameters){
     xTaskNotifyGive(pushTaskHandle);
     xTaskNotifyGive(logTaskHandle);
     vTaskDelay(gpsDelay);
+    //vTaskDelayUntil(&gpsLastWake, interval);
   }
 }
 
@@ -233,14 +231,21 @@ void readModbus(void *pvParameters) {
     xTaskNotifyGive(pushTaskHandle);
     xTaskNotifyGive(logTaskHandle);
     vTaskDelay(modbusDelay);
+    //vTaskDelayUntil(&modbusLastWake, modbus_interval);
   }
 }
 
 void remotePush(void *pvParameters){
   while(1){
     if (!modem.isGprsConnected()){
-      Serial.println("GPRS connection failed");
-      //errLog(getTime(err_time),"GPRS connection failed");
+      Serial.print("Connecting to APN: ");
+      Serial.println(config.apn);
+      if (!modem.gprsConnect(config.apn.c_str(), config.gprsUser.c_str(), config.gprsPass.c_str())) {
+        Serial.println("GPRS connection failed");
+        //errLog(getTime(err_time),"GPRS connection failed");
+      } else {
+        Serial.println("GPRS connected");
+      }
     } else if (!mqtt.connected()){
       Serial.print("Attempting MQTT connection...");
       if (mqtt.connect(macAdr, config.brokerUser.c_str(), config.brokerPass.c_str())){
@@ -274,10 +279,12 @@ void remotePush(void *pvParameters){
       // Serialize JSON and publish
       char buffer[1024];
       size_t n = serializeJson(data, buffer);
+      mqtt.loop();
       mqtt.publish(config.topic.c_str(), buffer, n);
     }
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
     vTaskDelay(pushDelay);
+    //vTaskDelayUntil(&remoteLastWake, interval);
   }
 }
 
@@ -295,6 +302,7 @@ void localLog(void *pvParameters){
     }
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
     vTaskDelay(logDelay);
+    //vTaskDelayUntil(&localLastWake, interval);
   }
 }
 
@@ -306,27 +314,35 @@ void checkRTC(void *pvParameters){
         Rtc.SetIsRunning(true);
       }
     }
-    dateTime = getTime();
+    getTime(dateTime);
     xTaskNotifyGive(pushTaskHandle);
     xTaskNotifyGive(logTaskHandle);
     vTaskDelay(rtcDelay);
+    //vTaskDelayUntil(&rtcLastWake, interval);
   }
 }
 
-String getTime(){
-  char time[40];
-  RtcDateTime now = Rtc.GetDateTime();
-  snprintf_P(time, countof(time),
+void getTime(char* buffer){
+  run_time = Rtc.GetDateTime();
+  snprintf_P(buffer, 20,
             PSTR("%02u/%02u/%04u %02u:%02u:%02u"),
-            now.Month(),now.Day(), now.Year(),
-            now.Hour(), now.Minute(), now.Second());
-  return String(time);
+            run_time.Month(),run_time.Day(), run_time.Year(),
+            run_time.Hour(), run_time.Minute(), run_time.Second());
 }
 
-void errLog(String time, const char* msg){
-  String errMsg = String(time) + "," + String(msg);
-  File file = SD.open("/error.csv");
-  appendFile(SD, "/error.csv", errMsg.c_str());
+void errLog(const char* msg){
+  char err_time[20];
+  getTime(err_time);
+  // Calculate the required buffer size dynamically
+  size_t msgSize = strlen(err_time) + strlen(msg) + 3; // 2 for ',' and '\n', 1 for '\0'
+  char* errMsg = (char*)malloc(msgSize);
+  if (errMsg == NULL) {
+    Serial.println("Failed to allocate memory for error message!");
+    return;
+  }
+  snprintf(errMsg, msgSize, "%s,%s\n", time, msg);
+  appendFile(SD, "/error.csv", errMsg);
+  free(errMsg);
 }
 
 void callback(char* topic, byte* message, unsigned int len){

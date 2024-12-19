@@ -5,7 +5,7 @@
 bool ConfigManager::getNetwork(){
   File file = SD.open("/config.json");
   if (!file) {
-    err = "Failed to open network config file";
+    lastError = "Failed to open network config file";
     return false;
   }
   // Allocate a JSON document
@@ -13,7 +13,7 @@ bool ConfigManager::getNetwork(){
   // Parse the JSON from the file
   DeserializationError error = deserializeJson(config, file);
   if (error) {
-    err = ("Failed to get network config: " + String(error.f_str())).c_str();
+    lastError = ("Failed to get network config: " + String(error.f_str())).c_str();
     return false;
   }
   file.close();
@@ -28,14 +28,17 @@ bool ConfigManager::getNetwork(){
   brokerUser = config["NetworkConfiguration"]["BrokerUser"].as<String>().c_str();
   brokerPass = config["NetworkConfiguration"]["BrokerPass"].as<String>().c_str();
   port = config["NetworkConfiguration"]["Port"].as<uint16_t>();
-
+  
+  Serial.println(apn); Serial.println(simPin); Serial.println(gprsUser);
+  Serial.println(gprsPass); Serial.println(topic); Serial.println(broker);
+  Serial.println(brokerUser); Serial.println(brokerPass); Serial.println(port);
   return true;
 }
 
 bool ConfigManager::getTank(){
   File file = SD.open("/config.json");
   if (!file) {
-    err = "Failed to open tank config file";
+    lastError = "Failed to open tank config file";
     return false;
   }
   // Allocate a JSON document
@@ -43,7 +46,7 @@ bool ConfigManager::getTank(){
   // Parse the JSON from the file
   DeserializationError error = deserializeJson(config, file);
   if (error) {
-    err = ("Failed to get tank config: " + String(error.f_str())).c_str();
+    lastError = ("Failed to get tank config: " + String(error.f_str())).c_str();
     return false;
   }
   file.close();
@@ -56,7 +59,6 @@ bool ConfigManager::getTank(){
     modbusReg.reserve(modbusRegs.size());
     for(JsonVariant regValue : modbusRegs){
       modbusReg.push_back(regValue.as<uint16_t>());
-      Serial.print(modbusReg.back()); Serial.print(" ");
     }
     Serial.println("");
     probeId.push_back(tank["Id"].as<int>()); Serial.println(probeId.back());

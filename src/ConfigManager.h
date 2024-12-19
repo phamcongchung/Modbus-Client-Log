@@ -13,7 +13,7 @@ struct ProbeData {
 
 class ConfigManager{
 public:
-  const char* err;
+  const char* lastError;
   // GPRSS credentials
   String apn;
   String simPin;
