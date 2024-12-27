@@ -33,4 +33,6 @@ public:
   bool getNetwork();
 };
 
+extern ConfigManager config;
+
 #endif

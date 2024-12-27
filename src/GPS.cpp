@@ -4,7 +4,11 @@
 void GPS::init(){
   // Enable GPS
   modem.sendAT("+CGPS=1,1");  // Start GPS in standalone mode
-  modem.waitResponse(10000L);
+  if(modem.waitResponse(10000L) == 1){
+    err = GPS_OK;
+  } else {
+    err = GPS_NO_RESPONSE;
+  }
 }
 
 Location GPS::update(){

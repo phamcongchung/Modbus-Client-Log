@@ -28,10 +28,6 @@ bool ConfigManager::getNetwork(){
   brokerUser = config["NetworkConfiguration"]["BrokerUser"].as<String>().c_str();
   brokerPass = config["NetworkConfiguration"]["BrokerPass"].as<String>().c_str();
   port = config["NetworkConfiguration"]["Port"].as<uint16_t>();
-  
-  Serial.println(apn); Serial.println(simPin); Serial.println(gprsUser);
-  Serial.println(gprsPass); Serial.println(topic); Serial.println(broker);
-  Serial.println(brokerUser); Serial.println(brokerPass); Serial.println(port);
   return true;
 }
 
@@ -61,9 +57,9 @@ bool ConfigManager::getTank(){
       modbusReg.push_back(regValue.as<uint16_t>());
     }
     Serial.println("");
-    probeId.push_back(tank["Id"].as<int>()); Serial.println(probeId.back());
-    String device = tank["Device"]; Serial.println(device);
-    String serialNo = tank["SerialNo"]; Serial.println(serialNo);
+    probeId.push_back(tank["Id"].as<int>());
+    String device = tank["Device"];
+    String serialNo = tank["SerialNo"];
   }
   return true;
 }
