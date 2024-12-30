@@ -1,0 +1,11 @@
+1. Tạo hàm template<typename T> để truyền nhiều kiểu dữ liệu vào cùng 1 hàm:
+- Tạo file .tpp, include file header và viết hàm template vào file
+- Include file .tpp trong file header
+- Lưu file .tpp trong đường dẫn thư viện chứa file header
+2. Yêu cầu bổ sung: - 5 Analog
+                    - 3 Digital
+                    - 1 cổng RS485
+                    - 1 cổng RS232 (UART)
+                    - 7 LED cảnh báo
+                    - Nguồn vào DC 12V
+                    - Công tắc nguồn
