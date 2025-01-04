@@ -2,14 +2,14 @@
 #include <SD.h>
 #include <Wire.h>
 #include <EEPROM.h>
-#include <RtcDS3231.h>
-#include <HTTPClient.h>
 #include <ArduinoJson.h>
-#include <PubSubClient.h>
 #include <esp_task_wdt.h>
 #include <ModbusRTUClient.h>
-#include <LiquidCrystal_I2C.h>
 #include "ConfigManager.h"
+#include "RemoteLogger.h"
+#include "LocalLogger.h"
+#include "Display.h"
+#include "Modem.h"
 #include "GPS.h"
 
 #define TASK_WDT_TIMEOUT  60
@@ -20,13 +20,13 @@
 #define EEPROM_SIZE       20
 
 HardwareSerial SerialAT(1);
-TinyGsm modem(SerialAT);
+Modem modem(SerialAT, SIM_RXD, SIM_TXD, SIM_BAUD);
 TinyGsmClient client(modem);
 GPS gps(modem);
-PubSubClient mqtt(client);
+RemoteLogger remote(client);
 ConfigManager config;
-RtcDS3231<TwoWire> Rtc(Wire);
-LiquidCrystal_I2C lcd(0x27, 20, 4);
+RTC Rtc(Wire);
+Display lcd(0x27, 20, 4);
 
 static const BaseType_t pro_cpu = 0;
 static const BaseType_t app_cpu = 1;
@@ -40,19 +40,7 @@ String bearerToken;
 RtcDateTime run_time, compiled;
 std::vector<ProbeData> probeData;
 
-String csv2Json(String rows[], int rowCount);
-String readFromCsv(const String& row);
-String readStrFromFlash(int startAdr);
-bool sendData(String& jsonPayload);
-
-void appendFile(fs::FS &fs, const char * path, const char * message);
-void callback(char* topic, byte* message, unsigned int len);
-void saveStr2Flash(int startAdr, String timeStamp);
 void processCsv(File data, int fileNo);
-void errLog(const char* msg);
-void getTime(char* buffer);
-void clearRow(int row);
-void getToken();
 
 // Task handles
 static TaskHandle_t gpsTaskHandle = NULL;
@@ -81,7 +69,7 @@ void readModbus(void *pvParameters);
 void checkRTC(void *pvParameters);
 void remotePush(void *pvParameters);
 void localLog(void *pvParameters);
-
+/****************************************************************************************************/
 void setup() {
   Serial.begin(115200);
   EEPROM.begin(EEPROM_SIZE);
@@ -97,8 +85,7 @@ void setup() {
   lcd.init();
   lcd.backlight();
   lcd.setCursor(0,0);
-
-  // Initialize DS3231 communication
+  /************************************** Initialize DS3231 *******************************************/
   Rtc.Begin();
   compiled = RtcDateTime(__DATE__, __TIME__);
   Serial.println();
@@ -128,7 +115,7 @@ void setup() {
   Rtc.Enable32kHzPin(false);
   Rtc.SetSquareWavePin(DS3231SquareWavePin_ModeNone);
   delay(1000);
-
+  /*************************************** Set Up microSD *********************************************/
   if(!SD.begin(5)){
     Serial.println("Card Mount Failed");
   }
@@ -151,16 +138,15 @@ void setup() {
   uint64_t cardSize = SD.cardSize() / (1024 * 1024);
   Serial.printf("SD Card Size: %lluMB\n", cardSize);
   Serial.println("");
-  
-  if(!config.getNetwork()){
+  /************************************ Get Config Credentials ****************************************/
+  if(!config.readNetwork()){
     Serial.println(config.lastError);
   }
-  if(!config.getTank()){
+  if(!config.readTank()){
     Serial.println(config.lastError);
   }
   delay(1000);
-
-  SerialAT.begin(SIM_BAUD, SERIAL_8N1, SIM_RXD, SIM_TXD);
+  /************************************** Initialize 4G Modem *****************************************/
   Serial.println("Initializing modem...");
   if(!modem.init()){
     Serial.println("Restarting modem...");
@@ -172,7 +158,7 @@ void setup() {
     if (modem.getSimStatus() == 2){
       Serial.println("SIM PIN required.");
       // Send the PIN to the modem
-      modem.sendAT("+CPIN=" + config.simPin);
+      modem.simUnlock(config);
       delay(1000);
       if (modem.getSimStatus() != 1) {
         Serial.println("Failed to unlock SIM.");
@@ -183,40 +169,38 @@ void setup() {
     }
   }
   delay(1000);
-
-  // Initialize GPS
-  gps.init();
-  if(gps.lastError() != NULL){
-    clearRow(0);
-    lcd.print(gps.lastError());
-    errLog(gps.lastError());
+  /**************************************** Initialize GPS ********************************************/
+  if(!gps.init()){
+    lcd.clearRow(0);
+    lcd.print("Failed to initialize GPS");
+    errLog("Failed to initialize GPS", Rtc);
   }
-  // Initialize the Modbus RTU client
+  /********************************** Initialize Modbus RTU client ************************************/
   if(!ModbusRTUClient.begin(RTU_BAUD))
     Serial.println("Failed to start Modbus RTU Client!");
   probeData.reserve(config.probeId.size());
-  // Initialize MQTT client
-  mqtt.setServer(config.broker.c_str(), config.port);
-  mqtt.setBufferSize(1024);
-  mqtt.setCallback(callback);
-
+  /************************************* Initialize MQTT client ***************************************/
+  remote.setServer(config);
+  remote.setBufferSize(1024);
+  remote.setCallback(callBack);
+  /****************************************************************************************************/
   if (!modem.isGprsConnected()){
     Serial.print("Connecting to APN: ");
-    Serial.println(config.apn);
-    if (!modem.gprsConnect(config.apn.c_str(), config.gprsUser.c_str(), config.gprsPass.c_str())) {
+    Serial.println(config.apn());
+    if (!modem.gprsConnect(config)){
       Serial.println("GPRS failed");
     } else {
       Serial.println("GPRS connected");
     }
   }
   delay(5000);
-
-  getToken();
-  processCsv(SD.open("/probe2.csv"), 2);
-  /*for (int i = 0; i < 20; i++) {
+  /****************************************************************************************************/
+  remote.getApiToken("YOUR_SERVER_USER_NAME", "YOUR_SERVER_PASSWORD");
+  for (int i = 0; i < 20; i++) {
     EEPROM.write(0 + i, 0);
   }
-  EEPROM.commit();*/
+  EEPROM.commit();
+  processCsv(SD.open("/probe2.csv"), 2);
 
   // Create FreeRTOS tasks
   xTaskCreatePinnedToCore(readGPS, "Read GPS", 3072, NULL, 1, &gpsTaskHandle, pro_cpu);
@@ -229,18 +213,22 @@ void setup() {
   esp_task_wdt_init(TASK_WDT_TIMEOUT, true);
   vTaskDelete(NULL);
 }
-
-void loop() {
-  
-}
+/******************************************************************************************************/
+void loop(){}
 
 void readGPS(void *pvParameters){
   while(1){
-    gps.update();
-    if(gps.lastError() != NULL){
-      clearRow(0);
-      lcd.print(gps.lastError());
-      errLog(gps.lastError());
+    int status = gps.update();
+    if(status != 1){
+      if(status == 0){
+        lcd.clearRow(0);
+        lcd.print("No GPS response");
+        errLog("No GPS response", Rtc);
+      } else if(status == 2) {
+        lcd.clearRow(0);
+        lcd.print("Invalid GPS data");
+        errLog("Invalid GPS data", Rtc);
+      }
     }
     xTaskNotifyGive(pushTaskHandle);
     xTaskNotifyGive(logTaskHandle);
@@ -248,7 +236,7 @@ void readGPS(void *pvParameters){
     //vTaskDelayUntil(&gpsLastWake, interval);
   }
 }
-
+/******************************************************************************************************/
 void readModbus(void *pvParameters) {
   while(1){
     char errBuffer[512];
@@ -261,7 +249,7 @@ void readModbus(void *pvParameters) {
       Serial.printf("Probe number %d:\n", config.probeId[i]);
       for (size_t j = 0; j < 5; ++j){
         *dataPointers[j] = ModbusRTUClient.holdingRegisterRead<float>(
-                            config.probeId[i], config.modbusReg[j], BIGEND);
+                          config.probeId[i], config.modbusReg[j], BIGEND);
         if (*dataPointers[j] < 0){
           Serial.printf("Failed to read %s for probe ID: %d\r\nError: ", labels[j], config.probeId[i]);
           Serial.println(ModbusRTUClient.lastError());
@@ -277,7 +265,7 @@ void readModbus(void *pvParameters) {
       Serial.print("\n");
       if (errors) {
         errBuffer[strlen(errBuffer) - 1] = '\0';
-        errLog(errBuffer);
+        errLog(errBuffer, Rtc);
         memset(errBuffer, 0, sizeof(errBuffer));
       }
     }
@@ -287,30 +275,30 @@ void readModbus(void *pvParameters) {
     //vTaskDelayUntil(&modbusLastWake, modbus_interval);
   }
 }
-
+/******************************************************************************************************/
 void remotePush(void *pvParameters){
   while(1){
-    if (!modem.isGprsConnected()){
+    if(!modem.isGprsConnected()){
       Serial.print("Connecting to APN: ");
-      Serial.println(config.apn);
-      if (!modem.gprsConnect(config.apn.c_str(), config.gprsUser.c_str(), config.gprsPass.c_str())) {
-        clearRow(1);
+      Serial.println(config.apn());
+      if (!modem.gprsConnect(config)){
+        lcd.clearRow(1);
         lcd.print("GPRS failed");
-        errLog("GPRS connection failed");
+        errLog("GPRS connection failed", Rtc);
       } else {
-        clearRow(1);
+        lcd.clearRow(1);
         lcd.print("GPRS connected");
       }
-    } else if (!mqtt.connected()){
-      if (mqtt.connect(macAdr, config.brokerUser.c_str(), config.brokerPass.c_str())){
-        clearRow(1);
+    } else if(!remote.connected()){
+      if (remote.connect(macAdr, config)){
+        lcd.clearRow(1);
         lcd.print("GPRS connected");
-        clearRow(2);
+        lcd.clearRow(2);
         lcd.print("MQTT connected");
         // Subscribe
-        mqtt.subscribe(config.topic.c_str());
+        remote.subscribe(config);
       } else {
-        clearRow(2);
+        lcd.clearRow(2);
         lcd.print("MQTT failed");
       }
     } else {
@@ -337,15 +325,15 @@ void remotePush(void *pvParameters){
       // Serialize JSON and publish
       char buffer[1024];
       size_t n = serializeJson(data, buffer);
-      mqtt.loop();
-      mqtt.publish(config.topic.c_str(), buffer, n);
+      remote.loop();
+      remote.publish(config, buffer, n);
     }
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
     vTaskDelay(pushDelay);
     //vTaskDelayUntil(&remoteLastWake, interval);
   }
 }
-
+/******************************************************************************************************/
 void localLog(void *pvParameters){
   while(1){
     for(size_t i = 0; i < config.probeId.size(); i++){
@@ -362,7 +350,7 @@ void localLog(void *pvParameters){
     //vTaskDelayUntil(&localLastWake, interval);
   }
 }
-
+/******************************************************************************************************/
 void checkRTC(void *pvParameters){
   while(1){
     if (!Rtc.IsDateTimeValid()){
@@ -377,92 +365,14 @@ void checkRTC(void *pvParameters){
       Serial.println("RTC was not actively running, starting now");
       Rtc.SetIsRunning(true);
     }
-    getTime(dateTime);
+    Rtc.saveTime(dateTime);
     xTaskNotifyGive(pushTaskHandle);
     xTaskNotifyGive(logTaskHandle);
     vTaskDelay(rtcDelay);
     //vTaskDelayUntil(&rtcLastWake, interval);
   }
 }
-
-void getToken(){
-  if (client.connect("YOUR_API_HOST", 6868, 10) != 1) {
-    Serial.println("Failed to connect to server.");
-  }
-
-  String tokenAuth = "{\"username\":\"YOUR_SERVER_USER_NAME\",\"password\":\"YOUR_SERVER_PASSWORD\"}";
-  String tokenReq = "POST /api/tokens HTTP/1.1\r\n"
-                    "Host: YOUR_HOST_URL:6868\r\n"
-                    "Content-Type: application/json\r\n"
-                    "tenant: root\r\n"
-                    "Accept-Language: en-US\r\n"
-                    "Connection: keep-alive\r\n"
-                    "Content-Length: " + String(tokenAuth.length()) + "\r\n\r\n";
-  client.print(tokenReq);
-  client.print(tokenAuth);
-
-  Serial.println("Waiting for authentication response...");
-  String response;
-  while (client.connected() || client.available()) {
-    if (client.available()){
-      response = client.readString();
-      Serial.println(response);
-      break;
-    }
-  }
-  
-  int jsonStart = response.indexOf("{");
-  if (jsonStart != -1){
-    response = response.substring(jsonStart);
-    int jsonEnd = response.lastIndexOf("}");
-    if (jsonEnd != -1)
-      response = response.substring(0, jsonEnd + 1);
-  } else {
-    response = "";
-  }
-
-  // Parse the token from the response (assumes JSON response format)
-  StaticJsonDocument<1024> jsonDoc;
-  DeserializationError error = deserializeJson(jsonDoc, response);
-  if (error) {
-    Serial.print("Failed to get token: ");
-    Serial.println(error.c_str());
-  }
-  if (jsonDoc.containsKey("token")) {
-    bearerToken = jsonDoc["token"].as<String>();
-    Serial.print("Extracted Token: ");
-    Serial.println(bearerToken);
-  } else {
-    Serial.println("Error: 'token' field not found in the response.");
-  }
-}
-
-bool sendData(String& jsonPayload){
-  // Send HTTP POST request
-  Serial.println("Sending data chunk...");
-  String postReq = "POST /api/v1/dataloggers/addlistdatalogger HTTP/1.1\r\n"
-                  "Host: YOUR_HOST_URL:6868\r\n"
-                  "Content-Type: application/json\r\n"
-                  "Authorization: Bearer " + bearerToken + "\r\n"
-                  "Accept-Language: en-US\r\n"
-                  "Connection: keep-alive\r\n"
-                  "Content-Length: " + String(jsonPayload.length()) + "\r\n\r\n";
-  client.print(postReq);
-  client.print(jsonPayload);
-
-  // Wait for server response
-  Serial.println("Waiting for server response...");
-  while (client.connected() || client.available()){
-    if (client.available()){
-      String response = client.readString();
-      Serial.println(response);
-      break;
-    }
-  }
-  return true;
-}
-
-// Read and push data from CSV file number 'fileNo' to API
+/********************* Read and push data from CSV file number 'fileNo' to API *************************/
 void processCsv(File data, int fileNo){
   const int chunkSize = 5;
   String rows[chunkSize];
@@ -490,11 +400,11 @@ void processCsv(File data, int fileNo){
     rows[rowCount++] = line;
     // If chunk is full, send it
     if (rowCount == chunkSize){
-      jsonPayload = csv2Json(rows, rowCount);
+      jsonPayload = csvToJson(rows, rowCount);
       Serial.println(jsonPayload);
-      if (sendData(jsonPayload)){
+      if (remote.sendToApi(jsonPayload)){
         // Update the last pushed timestamps
-        timeStamp = readFromCsv(rows[rowCount - 1]);
+        timeStamp = readCsv(rows[rowCount - 1]);
         rowCount = 0;
       } else {
         Serial.println("Failed to send data chunk. Retrying...");
@@ -505,155 +415,13 @@ void processCsv(File data, int fileNo){
   }
   // Send any remaining rows
   if (rowCount > 0){
-    jsonPayload = csv2Json(rows, rowCount);
-    if (sendData(jsonPayload)){
-      timeStamp = readFromCsv(rows[rowCount - 1]);
+    jsonPayload = csvToJson(rows, rowCount);
+    if (remote.sendToApi(jsonPayload)){
+      timeStamp = readCsv(rows[rowCount - 1]);
     } else {
       Serial.println("Failed to send final data chunk.");
     }
   }
-  saveStr2Flash(0, timeStamp);
+  saveToFlash(0, timeStamp);
   data.close();
-}
-
-String readFromCsv(const String& row) {
-  int commaIndex = row.indexOf(',');
-  if (commaIndex != -1) {
-    return row.substring(0, commaIndex);
-  }
-  return "";
-}
-
-void saveStr2Flash(int startAdr, String string) {
-  int length = string.length();
-  if (startAdr + length + 1 > EEPROM.length()){
-    Serial.println("Error: Not enough EEPROM space to save the string.");
-    return;
-  }
-  // Convert the String to a char array
-  char charArray[length + 1];
-  string.toCharArray(charArray, length + 1);
-  // Write each character to EEPROM
-  for (int i = 0; i < length; i++) {
-    EEPROM.write(startAdr + i, charArray[i]);
-  }
-  // Write null terminator
-  EEPROM.write(startAdr + length, '\0');
-  // Commit changes (if using ESP32 or ESP8266)
-  EEPROM.commit();
-}
-
-String readStrFromFlash(int startAdr) {
-  String result = "";
-  char read;
-  // Read characters until null terminator is found
-  for (int i = startAdr; i < EEPROM.length(); i++) {
-    read = EEPROM.read(i);
-    if (read == '\0') break; // Stop at null terminator
-    result += read;
-  }
-  return result;
-}
-
-String csv2Json(String rows[], int rowCount) {
-  String jsonPayload = "[";  // Start JSON array
-
-  for (int i = 0; i < rowCount; i++) {
-    if (i > 0) jsonPayload += ",";  // Add a comma between JSON objects
-
-    // Split the row by semicolons
-    String fields[10];
-    int fieldIndex = 0;
-
-    while (rows[i].length() > 0 && fieldIndex < 10) {
-      int delimiterIndex = rows[i].indexOf(';');
-      if (delimiterIndex == -1) {
-        fields[fieldIndex++] = rows[i];
-        rows[i] = "";
-      } else {
-        fields[fieldIndex++] = rows[i].substring(0, delimiterIndex);
-        rows[i] = rows[i].substring(delimiterIndex + 1);
-      }
-    }
-
-    // Construct JSON object for the current row
-    jsonPayload += "{";
-    jsonPayload += "\"time\":\"" + fields[0] + "\",";
-    jsonPayload += "\"latitude\":" + fields[1] + ",";
-    jsonPayload += "\"longitude\":" + fields[2] + ",";
-    jsonPayload += "\"speed\":" + fields[3] + ",";
-    jsonPayload += "\"height\":" + fields[4] + ",";
-    jsonPayload += "\"volumeFuel\":" + fields[5] + ",";
-    jsonPayload += "\"volumeEmpty\":" + fields[6] + ",";
-    jsonPayload += "\"temperature\":" + fields[7] + ",";
-    jsonPayload += "\"levelFuel\":" + fields[8] + ",";
-    jsonPayload += "\"levelWater\":" + fields[9];
-    jsonPayload += "}";
-  }
-
-  jsonPayload += "]";  // End JSON array
-  return jsonPayload;
-}
-
-void getTime(char* buffer){
-  run_time = Rtc.GetDateTime();
-  snprintf_P(buffer, 20,
-            PSTR("%02u-%02u-%04u %02u:%02u:%02u"),
-            run_time.Day(),run_time.Month(), run_time.Year(),
-            run_time.Hour(), run_time.Minute(), run_time.Second());
-}
-
-void errLog(const char* msg){
-  char err_time[20];
-  getTime(err_time);
-  // Calculate the required buffer size dynamically
-  size_t msgSize = strlen(err_time) + strlen(msg) + 3; // 2 for ',' and '\n', 1 for '\0'
-  char* errMsg = (char*)malloc(msgSize);
-  if (errMsg == NULL) {
-    Serial.println("Failed to allocate memory for error message!");
-    return;
-  }
-  snprintf(errMsg, msgSize, "\n%s,%s", err_time, msg);
-  appendFile(SD, "/error.csv", errMsg);
-  free(errMsg);
-}
-
-void clearRow(int row) {
-  lcd.setCursor(0, row);
-  for (int i = 0; i < 20; i++)
-    lcd.print(' ');
-  lcd.setCursor(0, row);
-}
-
-void callback(char* topic, byte* message, unsigned int len){
-  Serial.print("Message arrived on topic: ");
-  Serial.print(topic);
-  Serial.print(". Message: ");
-  String messageTemp;
-  
-  for (int i = 0; i < len; i++) {
-    Serial.print((char)message[i]);
-    messageTemp += (char)message[i];
-  }
-  Serial.println();
-}
-
-void appendFile(fs::FS &fs, const char* path, const char* message){
-  Serial.printf("Appending file: %s...", path);
-  
-  File file = fs.open(path, FILE_APPEND);
-  if(!file){
-    Serial.print("File does not exist, creating file...");
-    file = fs.open(path, FILE_WRITE);  // Create the file
-    if(!file){
-      Serial.println("Failed to create file");
-      return;
-    }
-  }
-  if(file.print(message)){
-    Serial.println("Message appended");
-  } else {
-    Serial.println("Append failed");
-  }
-  file.close();
 }

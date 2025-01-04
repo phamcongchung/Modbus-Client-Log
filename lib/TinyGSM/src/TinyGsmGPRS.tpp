@@ -185,6 +185,7 @@ class TinyGsmGPRS {
   }
 
   String getProviderImpl() TINY_GSM_ATTR_NOT_IMPLEMENTED;
+
 };
 
 #endif  // SRC_TINYGSMGPRS_H_

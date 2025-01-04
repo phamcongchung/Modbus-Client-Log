@@ -2,37 +2,31 @@
 #define CONFIGMANAGER_H
 
 #include <vector>
-
-struct ProbeData {
-  float volume;
-  float ullage;
-  float temperature;
-  float product;
-  float water;
-};
+#include "structs.h"
 
 class ConfigManager{
 public:
   const char* lastError;
-  // GPRSS credentials
-  String apn;
-  String simPin;
-  String gprsUser;
-  String gprsPass;
-  // MQTT credentials
-  String topic;
-  String broker;
-  String brokerUser;
-  String brokerPass;
-  uint16_t port;
-  // External vectors
   std::vector<int> probeId;
   std::vector<uint16_t> modbusReg;
+  
+  bool readTank();
+  bool readNetwork();
 
-  bool getTank();
-  bool getNetwork();
+  uint16_t port() const;
+  const char* apn() const;
+  const char* topic() const;
+  const char* broker() const;
+  const char* simPin() const;
+  const char* gprsUser() const;
+  const char* gprsPass() const;
+  const char* brokerUser() const;
+  const char* brokerPass() const;
+
+private:
+  Network creds;
+  friend class Modem;
+  friend class RemoteLogger;
 };
-
-extern ConfigManager config;
 
 #endif

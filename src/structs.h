@@ -19,14 +19,14 @@ struct Location{
 };
 
 struct Network{
-  String simPin;
-  String apn;
-  String gprsUser;
-  String gprsPass;
-  String topic;
-  String broker;
-  String brokerUser;
-  String brokerPass;
+  const char* simPin;
+  const char* apn;
+  const char* gprsUser;
+  const char* gprsPass;
+  const char* topic;
+  const char* broker;
+  const char* brokerUser;
+  const char* brokerPass;
   uint16_t port;
 };
 

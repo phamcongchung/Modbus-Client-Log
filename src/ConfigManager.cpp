@@ -2,7 +2,43 @@
 #include <ArduinoJson.h>
 #include "ConfigManager.h"
 
-bool ConfigManager::getNetwork(){
+const char* ConfigManager::apn() const{
+  return creds.apn;
+}
+
+const char* ConfigManager::simPin() const{
+  return creds.simPin;
+}
+
+const char* ConfigManager::gprsUser() const{
+  return creds.gprsUser;
+}
+
+const char* ConfigManager::gprsPass() const{
+  return creds.gprsPass;
+}
+
+const char* ConfigManager::topic() const{
+  return creds.topic;
+}
+
+const char* ConfigManager::broker() const{
+  return creds.broker;
+}
+
+const char* ConfigManager::brokerUser() const{
+  return creds.brokerUser;
+}
+
+const char* ConfigManager::brokerPass() const{
+  return creds.brokerPass;
+}
+
+uint16_t ConfigManager::port() const{
+  return creds.port;
+}
+
+bool ConfigManager::readNetwork(){
   File file = SD.open("/config.json");
   if (!file) {
     lastError = "Failed to open network config file";
@@ -19,19 +55,19 @@ bool ConfigManager::getNetwork(){
   file.close();
 
   // Extract Network Configuration as String
-  apn = config["NetworkConfiguration"]["Apn"].as<String>().c_str();
-  simPin = config["NetworkConfiguration"]["SimPin"].as<String>().c_str();
-  gprsUser = config["NetworkConfiguration"]["GprsUser"].as<String>().c_str();
-  gprsPass = config["NetworkConfiguration"]["GprsPass"].as<String>().c_str();
-  topic = config["NetworkConfiguration"]["Topic"].as<String>().c_str();
-  broker = config["NetworkConfiguration"]["Broker"].as<String>().c_str();
-  brokerUser = config["NetworkConfiguration"]["BrokerUser"].as<String>().c_str();
-  brokerPass = config["NetworkConfiguration"]["BrokerPass"].as<String>().c_str();
-  port = config["NetworkConfiguration"]["Port"].as<uint16_t>();
+  this->creds.apn = config["NetworkConfiguration"]["Apn"].as<String>().c_str();
+  this->creds.simPin = config["NetworkConfiguration"]["SimPin"].as<String>().c_str();
+  this->creds.gprsUser = config["NetworkConfiguration"]["GprsUser"].as<String>().c_str();
+  this->creds.gprsPass = config["NetworkConfiguration"]["GprsPass"].as<String>().c_str();
+  this->creds.topic = config["NetworkConfiguration"]["Topic"].as<String>().c_str();
+  this->creds.broker = config["NetworkConfiguration"]["Broker"].as<String>().c_str();
+  this->creds.brokerUser = config["NetworkConfiguration"]["BrokerUser"].as<String>().c_str();
+  this->creds.brokerPass = config["NetworkConfiguration"]["BrokerPass"].as<String>().c_str();
+  this->creds.port = config["NetworkConfiguration"]["Port"].as<uint16_t>();
   return true;
 }
 
-bool ConfigManager::getTank(){
+bool ConfigManager::readTank(){
   File file = SD.open("/config.json");
   if (!file) {
     lastError = "Failed to open tank config file";

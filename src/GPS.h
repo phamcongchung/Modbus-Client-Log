@@ -2,34 +2,26 @@
 #define GPS_H
 
 #define TINY_GSM_MODEM_SIM7600
+#define TIMEOUT          10000
 
-#include <TinyGsmClient.h>
+#include "structs.h"
+#include "Modem.h"
 
-enum Error{
-  GPS_OK,
-  GPS_NO_RESPONSE,
-  GPS_INVALID_DATA
-};
-
-struct Location{
-  double speed;
-  double altitude;
-  double latitude;
-  double longitude;
+enum State{
+  GPS_OK            = 1,
+  GPS_NO_RESPONSE   = 0,
+  GPS_INVALID_DATA  = 2,
 };
 
 class GPS{
 public:
-  GPS(TinyGsm& modem) : modem(modem){}
-
+  GPS(Modem& modem) : modem(modem){}
   Location location;
 
-  void init();
-  Location update();
-  const char* lastError();
+  bool init();
+  State update();
 private:
-  Error err;
-  TinyGsm& modem;
+  Modem& modem;
   double coordConvert(String coord, String direction);
   String getValue(const String& data, char separator, int index);
 };
