@@ -21,7 +21,10 @@ public:
   boolean publish(const ConfigManager& cm, const char* payload, boolean retained);
   void getApiToken(String user, String pass);
   bool apiConnect(String host, uint16_t port);
-  bool sendToApi(String& jsonPayload);
+  bool securePost(String& request, String& msg);
+  bool post(String& request, String& msg);
+  bool errorToApi(String& jsonPayload);
+  bool dataToApi(String& jsonPayload);
 private:
   Client& api;
   String user;

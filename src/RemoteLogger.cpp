@@ -32,40 +32,59 @@ bool RemoteLogger::apiConnect(String host, uint16_t port){
   }
 }
 
+bool RemoteLogger::post(String& request, String& msg){
+  String header = "POST " + request + " HTTP/1.1\r\n"
+                  "Host: " + this->host + ":" + String(this->port) + "\r\n"
+                  "Content-Type: application/json\r\n"
+                  "tenant: root\r\n"
+                  "Accept-Language: en-US\r\n"
+                  "Connection: keep-alive\r\n"
+                  "Content-Length: " + String(msg.length()) + "\r\n\r\n";
+  simClient->print(header);
+  simClient->print(msg);
+}
+
+bool RemoteLogger::securePost(String& request, String& msg){
+  String header = "POST " + request + " HTTP/1.1\r\n"
+                  "Host: " + this->host + ":" + String(this->port) + "\r\n"
+                  "Content-Type: application/json\r\n"
+                  "Authorization: Bearer " + this->token + "\r\n"
+                  "Accept-Language: en-US\r\n"
+                  "Connection: keep-alive\r\n"
+                  "Content-Length: " + String(msg.length()) + "\r\n\r\n";
+  simClient->print(header);
+  simClient->print(msg);
+}
+
 void RemoteLogger::getApiToken(String user, String pass){
   this->user = user; this->pass = pass;
   if (simClient->connect(this->host.c_str(), this->port, 10) != 1){
     Serial.println("Failed to connect to server.");
+    return;
   }
+  String req = "/api/tokens";
   String tokenAuth = "{\"username\":\"" + this->user + "\",\"password\":\"" + this->pass + "\"}";
-  String tokenReq = "POST /api/tokens HTTP/1.1\r\n"
-                    "Host: " + this->host + ":" + String(this->port) + "\r\n"
-                    "Content-Type: application/json\r\n"
-                    "tenant: root\r\n"
-                    "Accept-Language: en-US\r\n"
-                    "Connection: keep-alive\r\n"
-                    "Content-Length: " + String(tokenAuth.length()) + "\r\n\r\n";
-  simClient->print(tokenReq);
-  simClient->print(tokenAuth);
+  this->post(req, tokenAuth);
 
   Serial.println("Waiting for authentication response...");
   unsigned long startTime = millis();
   String response;
-  while ((millis() - startTime) < API_TIMEOUT){
-    if (simClient->available()){
+  while((millis() - startTime) < API_TIMEOUT){
+    if(simClient->available()){
       response = simClient->readString();
       Serial.println(response);
       break;
     }
   }
-  if (response.isEmpty()){
-    Serial.println("Error: No response from server");;
+  if(response.isEmpty()){
+    Serial.println("Error: No response from server.");
+    return;
   }
   int jsonStart = response.indexOf("{");
-  if (jsonStart != -1){
+  if(jsonStart != -1){
     response = response.substring(jsonStart);
     int jsonEnd = response.lastIndexOf("}");
-    if (jsonEnd != -1)
+    if(jsonEnd != -1)
       response = response.substring(0, jsonEnd + 1);
   } else {
     response = "";
@@ -76,67 +95,90 @@ void RemoteLogger::getApiToken(String user, String pass){
   if (error){
     Serial.print("Failed to get token: ");
     Serial.println(error.c_str());
+    return;
   }
-  if (jsonDoc.containsKey("token")){
+  if(jsonDoc.containsKey("token")){
     this->token = jsonDoc["token"].as<String>();
     Serial.print("Extracted Token: ");
     Serial.println(this->token);
   } else {
-    Serial.println("Error: 'token' field not found in the response.");
+    Serial.println("Error: 'token' field not found.");
   }
 }
 
-bool RemoteLogger::sendToApi(String& jsonPayload){
+bool RemoteLogger::errorToApi(String& jsonPayload){
   if(this->token == NULL){
     Serial.println("Error: Token is NULL");
     return false;
   }
-  // Send HTTP POST request
-  Serial.println("Sending data chunk...");
-  String postReq = "POST /api/v1/dataloggers/addlistdatalogger HTTP/1.1\r\n"
-                  "Host: YOUR_HOST_URL:6868\r\n"
-                  "Content-Type: application/json\r\n"
-                  "Authorization: Bearer " + this->token + "\r\n"
-                  "Accept-Language: en-US\r\n"
-                  "Connection: keep-alive\r\n"
-                  "Content-Length: " + String(jsonPayload.length()) + "\r\n\r\n";
-  simClient->print(postReq);
-  simClient->print(jsonPayload);
-
-  // Wait for server response
+  Serial.println("Sending error chunk...");
+  String req = "/api/v1/errorloggers/addlisterrorogger";
+  this->securePost(req, jsonPayload);
+  
   Serial.println("Waiting for server response...");
   unsigned long startTime = millis();
   String response;
-
-  while ((millis() - startTime) < API_TIMEOUT){
-    if (simClient->available()){
+  while((millis() - startTime) < API_TIMEOUT){
+    if(simClient->available()){
       response = simClient->readString();
       Serial.println(response);
       break;
     }
   }
-  if (response.isEmpty()){
+  if(response.isEmpty()){
     Serial.println("Error: No response from server");
     return false;
   }
-  if (response.startsWith("HTTP/1.1 200")){
+  if(response.startsWith("HTTP/1.1 200")){
     Serial.println("Data successfully sent to API");
     return true;
   } else {
     Serial.println("Error: API response indicates failure");
-    return false;
   }
+  return false;
 }
 
-void callBack(char* topic, byte* message, unsigned int len){
+bool RemoteLogger::dataToApi(String& jsonPayload){
+  if(this->token == NULL){
+    Serial.println("Error: Token is NULL");
+    return false;
+  }
+  Serial.println("Sending data chunk...");
+  String req = "/api/v1/dataloggers/addlistdatalogger";
+  this->securePost(req, jsonPayload);
+  
+  Serial.println("Waiting for server response...");
+  unsigned long startTime = millis();
+  String response;
+  while((millis() - startTime) < API_TIMEOUT){
+    if(simClient->available()){
+      response = simClient->readString();
+      Serial.println(response);
+      break;
+    }
+  }
+  if(response.isEmpty()){
+    Serial.println("Error: No response from server");
+    return false;
+  }
+  if(response.startsWith("HTTP/1.1 200")){
+    Serial.println("Data successfully sent to API");
+    return true;
+  } else {
+    Serial.println("Error: API response indicates failure");
+  }
+  return false;
+}
+
+void callBack(char* topic, byte* msg, unsigned int len){
   Serial.print("Message arrived on topic: ");
   Serial.print(topic);
   Serial.print(". Message: ");
-  String messageTemp;
+  String tempMsg;
   
   for (int i = 0; i < len; i++) {
-    Serial.print((char)message[i]);
-    messageTemp += (char)message[i];
+    Serial.print((char)msg[i]);
+    tempMsg += (char)msg[i];
   }
   Serial.println();
 }
