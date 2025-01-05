@@ -22,8 +22,8 @@
 HardwareSerial SerialAT(1);
 Modem modem(SerialAT, SIM_RXD, SIM_TXD, SIM_BAUD);
 TinyGsmClient client(modem);
-GPS gps(modem);
 RemoteLogger remote(client);
+GPS gps(modem);
 ConfigManager config;
 RTC Rtc(Wire);
 Display lcd(0x27, 20, 4);
@@ -40,7 +40,7 @@ String bearerToken;
 RtcDateTime run_time, compiled;
 std::vector<ProbeData> probeData;
 
-void processCsv(File data, int fileNo);
+bool processCsv(fs::FS &fs, const char* path, int fileNo);
 
 // Task handles
 static TaskHandle_t gpsTaskHandle = NULL;
@@ -74,12 +74,9 @@ void setup() {
   Serial.begin(115200);
   EEPROM.begin(EEPROM_SIZE);
 
-  // Retrieve MAC address
   esp_efuse_mac_get_default(mac);
-  // Format the MAC address into the string
   sprintf(macAdr, "%02X:%02X:%02X:%02X:%02X:%02X",
           mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-  // Print the MAC address
   Serial.printf("ESP32 MAC Address: %s\r\n", macAdr);
 
   lcd.init();
@@ -200,7 +197,7 @@ void setup() {
     EEPROM.write(0 + i, 0);
   }
   EEPROM.commit();
-  processCsv(SD.open("/probe2.csv"), 2);
+  processCsv(SD, "/probe1.csv", 1);
 
   // Create FreeRTOS tasks
   xTaskCreatePinnedToCore(readGPS, "Read GPS", 3072, NULL, 1, &gpsTaskHandle, pro_cpu);
@@ -373,20 +370,22 @@ void checkRTC(void *pvParameters){
   }
 }
 /********************* Read and push data from CSV file number 'fileNo' to API *************************/
-void processCsv(File data, int fileNo){
-  const int chunkSize = 5;
+bool processCsv(fs::FS &fs, const char* path, int fileNo){
+  File data = fs.open(path, FILE_READ);
+  if(!data){
+    Serial.println("Data is non-existent");
+    return false;
+  }
+  const int chunkSize = 5;    // Size in rows
   String rows[chunkSize];
   String jsonPayload;
   int rowCount = 0;
-
-  timeStamp = ""; //readStrFromFlash(fileNo * 20);
-  // Flag to check if there is already a timestamp
-  bool startReading = false;
+  timeStamp = "";             // or `timeStamp = readFlash(fileNo * 20);`
+  bool startReading = false;  // Flag to check if there is already a timestamp
 
   while (data.available()){
     String line = data.readStringUntil('\n');
     line.trim();
-
     // Skip rows until the last pushed timestamp is found
     if (!startReading) {
       if (timeStamp == "" || line.startsWith(timeStamp)) {

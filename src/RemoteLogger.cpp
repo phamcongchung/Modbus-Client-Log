@@ -34,7 +34,7 @@ bool RemoteLogger::apiConnect(String host, uint16_t port){
 
 void RemoteLogger::getApiToken(String user, String pass){
   this->user = user; this->pass = pass;
-  if (simClient->connect(this->host.c_str(), this->port, 10) != 1) {
+  if (simClient->connect(this->host.c_str(), this->port, 10) != 1){
     Serial.println("Failed to connect to server.");
   }
   String tokenAuth = "{\"username\":\"" + this->user + "\",\"password\":\"" + this->pass + "\"}";
@@ -58,7 +58,7 @@ void RemoteLogger::getApiToken(String user, String pass){
       break;
     }
   }
-  if (response.isEmpty()) {
+  if (response.isEmpty()){
     Serial.println("Error: No response from server");;
   }
   int jsonStart = response.indexOf("{");
@@ -73,11 +73,11 @@ void RemoteLogger::getApiToken(String user, String pass){
   // Parse the token from the response (assumes JSON response format)
   StaticJsonDocument<1024> jsonDoc;
   DeserializationError error = deserializeJson(jsonDoc, response);
-  if (error) {
+  if (error){
     Serial.print("Failed to get token: ");
     Serial.println(error.c_str());
   }
-  if (jsonDoc.containsKey("token")) {
+  if (jsonDoc.containsKey("token")){
     this->token = jsonDoc["token"].as<String>();
     Serial.print("Extracted Token: ");
     Serial.println(this->token);
@@ -115,11 +115,11 @@ bool RemoteLogger::sendToApi(String& jsonPayload){
       break;
     }
   }
-  if (response.isEmpty()) {
+  if (response.isEmpty()){
     Serial.println("Error: No response from server");
     return false;
   }
-  if (response.startsWith("HTTP/1.1 200")) {
+  if (response.startsWith("HTTP/1.1 200")){
     Serial.println("Data successfully sent to API");
     return true;
   } else {

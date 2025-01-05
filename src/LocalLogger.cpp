@@ -2,7 +2,7 @@
 #include <EEPROM.h>
 #include <SD.h>
 
-String readFlash(int startAdr) {
+String readFlash(int startAdr){
   String result = "";
   char read;
   // Read characters until null terminator is found
@@ -14,25 +14,25 @@ String readFlash(int startAdr) {
   return result;
 }
 
-String readCsv(const String& row) {
+String readCsv(const String& row){
   int commaIndex = row.indexOf(',');
-  if (commaIndex != -1) {
+  if (commaIndex != -1){
     return row.substring(0, commaIndex);
   }
   return "";
 }
 
-String csvToJson(String rows[], int rowCount) {
+String csvToJson(String rows[], int rowCount){
   String jsonPayload = "[";  // Start JSON array
 
-  for (int i = 0; i < rowCount; i++) {
+  for (int i = 0; i < rowCount; i++){
     if (i > 0) jsonPayload += ",";  // Add a comma between JSON objects
 
     // Split the row by semicolons
     String fields[10];
     int fieldIndex = 0;
 
-    while (rows[i].length() > 0 && fieldIndex < 10) {
+    while (rows[i].length() > 0 && fieldIndex < 10){
       int delimiterIndex = rows[i].indexOf(';');
       if (delimiterIndex == -1) {
         fields[fieldIndex++] = rows[i];
@@ -62,7 +62,7 @@ String csvToJson(String rows[], int rowCount) {
   return jsonPayload;
 }
 
-void saveToFlash(int startAdr, String string) {
+void saveToFlash(int startAdr, String string){
   int length = string.length();
   if (startAdr + length + 1 > EEPROM.length()){
     Serial.println("Error: Not enough EEPROM space to save the string.");
@@ -72,7 +72,7 @@ void saveToFlash(int startAdr, String string) {
   char charArray[length + 1];
   string.toCharArray(charArray, length + 1);
   // Write each character to EEPROM
-  for (int i = 0; i < length; i++) {
+  for (int i = 0; i < length; i++){
     EEPROM.write(startAdr + i, charArray[i]);
   }
   // Write null terminator

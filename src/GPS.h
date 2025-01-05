@@ -15,7 +15,7 @@ enum State{
 
 class GPS{
 public:
-  GPS(Modem& modem) : modem(modem){}
+  GPS(Modem& extModem) : modem(extModem){}
   Location location;
 
   bool init();
