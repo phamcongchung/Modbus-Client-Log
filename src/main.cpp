@@ -11,7 +11,7 @@
 #include "Display.h"
 #include "Modem.h"
 #include "GPS.h"
-
+//`remote.token` bị đổi giá trị trong while(data.available()) vòng lặp dòng 404 và 446
 #define SIM_RXD           32
 #define SIM_TXD           33
 #define SIM_BAUD          115200
@@ -31,7 +31,7 @@ Display lcd(0x27, 20, 4);
 static const BaseType_t pro_cpu = 0;
 static const BaseType_t app_cpu = 1;
 
-String token;
+// String token;
 
 uint8_t mac[6];
 char macAdr[18];
@@ -65,17 +65,10 @@ const TickType_t logDelay = pdMS_TO_TICKS(5000);
 const TickType_t pushDelay = pdMS_TO_TICKS(5000);
 const TickType_t apiDelay = pdMS_TO_TICKS(5000);
 /*********************************** Function declarations ****************************************/
-bool post(String& request, String& msg);
-bool securePost(String& request, String& msg);
-void retrieveToken(String user, String pass);
-bool errorToApi(String& jsonPayload);
-bool dataToApi(String& jsonPayload);
-
 bool isOpen(const char* filename);
 bool findTimestamp(File &data, String &timeStamp, size_t &filePtr);
 bool sendRows(File &data, String &timeStamp, int fileNo);
 bool processCsv(fs::FS &fs, const char* path, int fileNo);
-
 // Task prototypes
 void readGPS(void *pvParameters);
 void readModbus(void *pvParameters);
@@ -209,14 +202,14 @@ void setup() {
   remote.apiConnect("YOUR_HOST_URL", 6868);
   Serial.println("Getting API token");
   remote.retrieveToken("YOUR_SERVER_USER_NAME", "YOUR_SERVER_PASSWORD");
-  token = remote.token;
+  //token = remote.token;
 
-  deleteFlash<String>(0);
-  deleteFlash<size_t>(20);
+  //deleteFlash<String>(0);
+  //deleteFlash<size_t>(20);
   processCsv(SD, "/error.csv", 0);
 
-  deleteFlash<String>(20 + sizeof(size_t));
-  deleteFlash<size_t>(20 + sizeof(size_t) + 20);
+  //deleteFlash<String>(20 + sizeof(size_t));
+  //deleteFlash<size_t>(20 + sizeof(size_t) + 20);
   processCsv(SD, "/probe2.csv", 1);
 
   // Create FreeRTOS tasks
@@ -235,6 +228,7 @@ void setup() {
 void loop(){}
 /***************************************** GPS Task *************************************************/
 void readGPS(void *pvParameters){
+  Serial.println("Reading GPS...");
   while(1){
     int status = gps.update();
     if(status != 1){
@@ -257,6 +251,7 @@ void readGPS(void *pvParameters){
 /*************************************** Modbus Task ************************************************/
 void readModbus(void *pvParameters) {
   while(1){
+    Serial.println("Reading Modbus...");
     char errBuffer[512];
     bool errors = false;
     for (size_t i = 0; i < config.probeId.size(); ++i){
@@ -296,6 +291,7 @@ void readModbus(void *pvParameters) {
 /****************************************************************************************************/
 void remotePush(void *pvParameters){
   while(1){
+    Serial.println("Pushing to MQTT...");
     if(!modem.isGprsConnected()){
       Serial.print("Connecting to APN: ");
       Serial.println(config.apn());
@@ -354,6 +350,7 @@ void remotePush(void *pvParameters){
 /****************************************************************************************************/
 void localLog(void *pvParameters){
   while(1){
+    Serial.println("Logging microSD...");
     for(size_t i = 0; i < config.probeId.size(); i++){
       char path[15];
       snprintf(path, sizeof(path), "/probe%d.csv", i + 1);
@@ -371,6 +368,7 @@ void localLog(void *pvParameters){
 /****************************************************************************************************/
 void checkRTC(void *pvParameters){
   while(1){
+    Serial.println("Checking RTC...");
     if (!Rtc.IsDateTimeValid()){
       if(Rtc.LastError() != 0){
         Serial.println("RTC communication error");
@@ -393,6 +391,7 @@ void checkRTC(void *pvParameters){
 /********************* Read and push data from CSV file number 'fileNo' to API ***********************/
 void apiLog(void* pvParameters){
   while(1){
+    Serial.println("Pushing to API...");
     processCsv(SD, "/error.csv", 0);
     processCsv(SD, "/probe1.csv", 1);
     vTaskDelay(apiDelay);
@@ -450,8 +449,8 @@ bool sendRows(File &data, String &timeStamp, int fileNo){
     rows[rowCount++] = line;
     // Process a chunk when full
     if(rowCount == chunkSize){
-      remote.token = token.c_str();
-      Serial.println(remote.token);
+      //remote.token = token.c_str();
+      //Serial.println(remote.token);
       if(!processAndSend(false)){
         success = false;
         rowCount = 0;
@@ -486,143 +485,6 @@ bool processCsv(fs::FS &fs, const char* path, int fileNo){
   data.close();
   return true;
 }
-/*************************************** Support functions *******************************************/
-/*bool post(String& request, String& msg){
-  String header = "POST " + request + " HTTP/1.1\r\n"
-                  "Host: " + remote.host + ":" + String(remote.port) + "\r\n"
-                  "Content-Type: application/json\r\n"
-                  "tenant: root\r\n"
-                  "Accept-Language: en-US\r\n"
-                  "Connection: keep-alive\r\n"
-                  "Content-Length: " + String(msg.length()) + "\r\n\r\n";
-  client.print(header);
-  client.print(msg);
-}
-
-bool securePost(String& request, String& msg){
-  String header = "POST " + request + " HTTP/1.1\r\n"
-                  "Host: " + remote.host + ":" + String(remote.port) + "\r\n"
-                  "Content-Type: application/json\r\n"
-                  "Authorization: Bearer " + token + "\r\n"
-                  "Accept-Language: en-US\r\n"
-                  "Connection: keep-alive\r\n"
-                  "Content-Length: " + String(msg.length()) + "\r\n\r\n";
-  client.print(header);
-  client.print(msg);
-}
-
-void retrieveToken(String user, String pass){
-  if(!client.connected()){
-    Serial.println("Failed to connect to server.");
-    return;
-  }
-  String req = "/api/tokens";
-  String tokenAuth = "{\"username\":\"" + user + "\",\"password\":\"" + pass + "\"}";
-  post(req, tokenAuth);
-
-  Serial.println("Waiting for authentication response...");
-  unsigned long startTime = millis();
-  String response;
-  while((millis() - startTime) < API_TIMEOUT){
-    if(client.available()){
-      response = client.readString();
-      Serial.println(response);
-      break;
-    }
-  }
-  if(response.isEmpty()){
-    Serial.println("Error: No response from server.");
-    return;
-  }
-  int jsonStart = response.indexOf("{");
-  if(jsonStart != -1){
-    response = response.substring(jsonStart);
-    int jsonEnd = response.lastIndexOf("}");
-    if(jsonEnd != -1)
-      response = response.substring(0, jsonEnd + 1);
-  } else {
-    response = "";
-  }
-  // Parse the token from the response (assumes JSON response format)
-  StaticJsonDocument<1024> jsonDoc;
-  DeserializationError error = deserializeJson(jsonDoc, response);
-  if (error){
-    Serial.print("Failed to get token: ");
-    Serial.println(error.c_str());
-    return;
-  }
-  if(jsonDoc.containsKey("token")){
-    token = jsonDoc["token"].as<String>();
-    Serial.print("Extracted Token: ");
-    Serial.println(token);
-  } else {
-    Serial.println("Error: 'token' field not found.");
-  }
-}
-
-bool errorToApi(String& jsonPayload){
-  if(token == NULL){
-    Serial.println("Error: Token is NULL");
-    return false;
-  }
-  Serial.println("Sending error chunk...");
-  String req = "/api/v1/errorloggers/addlisterrorogger";
-  securePost(req, jsonPayload);
-  
-  Serial.println("Waiting for server response...");
-  unsigned long startTime = millis();
-  String response;
-  while((millis() - startTime) < API_TIMEOUT){
-    if(client.available()){
-      response = client.readString();
-      Serial.println(response);
-      break;
-    }
-  }
-  if(response.isEmpty()){
-    Serial.println("Error: No response from server");
-    return false;
-  }
-  if(response.startsWith("HTTP/1.1 200")){
-    Serial.println("Data successfully sent to API");
-    return true;
-  } else {
-    Serial.println("Error: API response indicates failure");
-  }
-  return false;
-}
-
-bool dataToApi(String& jsonPayload){
-  if(token == NULL){
-    Serial.println("Error: Token is NULL");
-    return false;
-  }
-  Serial.println("Sending data chunk...");
-  String req = "/api/v1/dataloggers/addlistdatalogger";
-  securePost(req, jsonPayload);
-  
-  Serial.println("Waiting for server response...");
-  unsigned long startTime = millis();
-  String response;
-  while((millis() - startTime) < API_TIMEOUT){
-    if(client.available()){
-      response = client.readString();
-      Serial.println(response);
-      break;
-    }
-  }
-  if(response.isEmpty()){
-    Serial.println("Error: No response from server");
-    return false;
-  }
-  if(response.startsWith("HTTP/1.1 200")){
-    Serial.println("Data successfully sent to API");
-    return true;
-  } else {
-    Serial.println("Error: API response indicates failure");
-  }
-  return false;
-}*/
 
 bool isOpen(const char *filename){
   for(auto &file : openFiles) {
