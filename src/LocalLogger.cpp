@@ -1,38 +1,49 @@
 #include "LocalLogger.h"
-#include <EEPROM.h>
 #include <SD.h>
 
-String readFlash(int startAdr){
-  String result = "";
-  char read;
-  // Read characters until null terminator is found
-  for (int i = startAdr; i < EEPROM.length(); i++) {
-    read = EEPROM.read(i);
-    if (read == '\0') break; // Stop at null terminator
-    result += read;
+void saveToFlash(int adr, String str){
+  int length = str.length();
+  if (adr + length + 1 > EEPROM.length()){
+    Serial.println("Error: Not enough EEPROM space to save the string.");
+    return;
   }
-  return result;
+  // Convert the String to a char array
+  char charArray[length + 1];
+  str.toCharArray(charArray, length + 1);
+  // Write each character to EEPROM
+  for (int i = 0; i < length; i++){
+    EEPROM.write(adr + i, charArray[i]);
+  }
+  // Write null terminator
+  EEPROM.write(adr + length, '\0');
+  // Commit changes (if using ESP32 or ESP8266)
+  EEPROM.commit();
 }
 
+void saveToFlash(int adr, size_t value){
+  for(size_t i = 0; i < sizeof(size_t); i++){
+    EEPROM.write(adr + i, (value >> (8 * i)) & 0xFF);
+  }
+  EEPROM.commit();
+}
+
+// Read csv rows and return time data
 String readCsv(const String& row){
-  int commaIndex = row.indexOf(',');
+  int commaIndex = row.indexOf(';');
   if (commaIndex != -1){
     return row.substring(0, commaIndex);
   }
   return "";
 }
 
-String csvToJson(String rows[], int rowCount){
-  String jsonPayload = "[";  // Start JSON array
-
+String dataToJson(String rows[], int rowCount){
+  String jsonPayload = "[";
   for (int i = 0; i < rowCount; i++){
-    if (i > 0) jsonPayload += ",";  // Add a comma between JSON objects
-
+    if(i > 0) jsonPayload += ",";
     // Split the row by semicolons
     String fields[10];
     int fieldIndex = 0;
-
-    while (rows[i].length() > 0 && fieldIndex < 10){
+    while(rows[i].length() > 0 && fieldIndex < 10){
       int delimiterIndex = rows[i].indexOf(';');
       if (delimiterIndex == -1) {
         fields[fieldIndex++] = rows[i];
@@ -42,8 +53,6 @@ String csvToJson(String rows[], int rowCount){
         rows[i] = rows[i].substring(delimiterIndex + 1);
       }
     }
-
-    // Construct JSON object for the current row
     jsonPayload += "{";
     jsonPayload += "\"time\":\"" + fields[0] + "\",";
     jsonPayload += "\"latitude\":" + fields[1] + ",";
@@ -57,28 +66,34 @@ String csvToJson(String rows[], int rowCount){
     jsonPayload += "\"levelWater\":" + fields[9];
     jsonPayload += "}";
   }
-
   jsonPayload += "]";  // End JSON array
   return jsonPayload;
 }
 
-void saveToFlash(int startAdr, String string){
-  int length = string.length();
-  if (startAdr + length + 1 > EEPROM.length()){
-    Serial.println("Error: Not enough EEPROM space to save the string.");
-    return;
+String errorToJson(String rows[], int rowCount){
+  String jsonPayload = "[";
+  for(int i = 0; i < rowCount; i++){
+    if(i > 0) jsonPayload += ",";
+    // Split the row by semicolons
+    String fields[2];
+    int fieldIndex = 0;
+    while(rows[i].length() > 0 && fieldIndex < 2){
+      int delimiterIndex = rows[i].indexOf(';');
+      if(delimiterIndex == -1){
+        fields[fieldIndex++] = rows[i];
+        rows[i] = "";
+      } else {
+        fields[fieldIndex++] = rows[i].substring(0, delimiterIndex);
+        rows[i] = rows[i].substring(delimiterIndex + 1);
+      }
+    }
+    jsonPayload += "{";
+    jsonPayload += "\"time\":\"" + fields[0] + "\",";
+    jsonPayload += "\"errorMessage\":\"" + fields[1] + "\"";
+    jsonPayload += "}";
   }
-  // Convert the String to a char array
-  char charArray[length + 1];
-  string.toCharArray(charArray, length + 1);
-  // Write each character to EEPROM
-  for (int i = 0; i < length; i++){
-    EEPROM.write(startAdr + i, charArray[i]);
-  }
-  // Write null terminator
-  EEPROM.write(startAdr + length, '\0');
-  // Commit changes (if using ESP32 or ESP8266)
-  EEPROM.commit();
+  jsonPayload += "]";
+  return jsonPayload;
 }
 
 void errLog(const char* msg, RTC& rtc){
@@ -89,7 +104,7 @@ void errLog(const char* msg, RTC& rtc){
     Serial.println("Failed to allocate memory for error message!");
     return;
   }
-  snprintf(errMsg, msgSize, "\n%;%s", rtc.getTimeStr().c_str(), msg);
+  snprintf(errMsg, msgSize, "\n%s;%s", rtc.getTimeStr().c_str(), msg);
   appendFile(SD, "/error.csv", errMsg);
   free(errMsg);
 }
@@ -111,7 +126,15 @@ bool appendFile(fs::FS &fs, const char* path, const char* message){
     return true;
   } else {
     Serial.println("Append failed");
-    file.close();
-    return false;
   }
+  file.close();
+  return false;
+}
+
+File openFile(fs::FS &fs, const char* path){
+  File data = fs.open(path, FILE_READ);
+  if(!data){
+    Serial.println("Data is non-existent");
+  }
+  return data;
 }

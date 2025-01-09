@@ -3,8 +3,11 @@
 
 bool GPS::init(){
   // Enable GPS
-  String response = modem.sendATCmd("+CGPS=1,1", TIMEOUT);
-  return response.indexOf("OK") != -1;
+  if(this->update() != GPS_OK){
+    String response = modem.sendATCmd("+CGPS=1,1", TIMEOUT);
+    return response.indexOf("OK") != -1;
+  }
+  return true;
 }
 
 State GPS::update(){

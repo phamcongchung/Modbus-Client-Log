@@ -11,26 +11,27 @@
 
 class RemoteLogger : public PubSubClient{
 public:
-  RemoteLogger(Client& client) : PubSubClient(client), api(client){}
+  RemoteLogger(TinyGsmClient& client) : PubSubClient(client), client(&client)/*, api(client)*/{}
+  // TinyGsmClient* simClient = static_cast<TinyGsmClient*>(&api);
 
-  TinyGsmClient* simClient = static_cast<TinyGsmClient*>(&api);
+  const char* token;
 
   PubSubClient& setServer(const ConfigManager& cm);
   boolean connect(const char *id, const ConfigManager& cm);
   boolean subscribe(const ConfigManager& cm);
   boolean publish(const ConfigManager& cm, const char* payload, boolean retained);
-  void getApiToken(String user, String pass);
-  bool apiConnect(String host, uint16_t port);
-  bool securePost(String& request, String& msg);
-  bool post(String& request, String& msg);
-  bool errorToApi(String& jsonPayload);
+  void retrieveToken(const char* user, const char* pass);
+  bool apiConnected();
+  bool apiConnect(const char* host, uint16_t port);
+  bool post(const char* request, const char* msg);
+  bool securePost(const char* request, const char* msg);
   bool dataToApi(String& jsonPayload);
+  bool errorToApi(String& jsonPayload);
 private:
-  Client& api;
-  String user;
-  String pass;
-  String host;
-  String token;
+  TinyGsmClient *client;
+  const char* user;
+  const char* pass;
+  const char* host;
   uint16_t port;
 };
 
