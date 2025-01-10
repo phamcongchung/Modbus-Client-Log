@@ -11,7 +11,7 @@
 #include "Display.h"
 #include "Modem.h"
 #include "GPS.h"
-//`remote.token` bị đổi giá trị trong while(data.available()) vòng lặp dòng 404 và 446
+
 #define SIM_RXD           32
 #define SIM_TXD           33
 #define SIM_BAUD          115200
@@ -24,14 +24,14 @@ Modem modem(SerialAT, SIM_RXD, SIM_TXD, SIM_BAUD);
 TinyGsmClient client(modem);
 RemoteLogger remote(client);
 GPS gps(modem);
-ConfigManager config;
+ConfigManager config(remote, modem);
 RTC Rtc(Wire);
 Display lcd(0x27, 20, 4);
 /*********************************** Variable declarations ****************************************/
 static const BaseType_t pro_cpu = 0;
 static const BaseType_t app_cpu = 1;
 
-// String token;
+String token;
 
 uint8_t mac[6];
 char macAdr[18];
@@ -49,6 +49,7 @@ static TaskHandle_t modbusTaskHandle = NULL;
 static TaskHandle_t rtcTaskHandle = NULL;
 static TaskHandle_t pushTaskHandle = NULL;
 static TaskHandle_t logTaskHandle = NULL;
+static TaskHandle_t apiTaskHandle = NULL;
 
 /*TickType_t gpsLastWake = xTaskGetTickCount();
 TickType_t modbusLastWake = xTaskGetTickCount();
@@ -75,7 +76,7 @@ void readModbus(void *pvParameters);
 void checkRTC(void *pvParameters);
 void remotePush(void *pvParameters);
 void localLog(void *pvParameters);
-void apiLog(void* pvParameters);
+//void apiLog(void* pvParameters);
 /**************************************************************************************************/
 void setup() {
   Serial.begin(115200);
@@ -142,7 +143,10 @@ void setup() {
   uint64_t cardSize = SD.cardSize() / (1024 * 1024);
   Serial.printf("SD Card Size: %lluMB\n", cardSize);
   /************************************ Get Config Credentials **************************************/
-  if(!config.readNetwork()){
+  if(!config.readGprs()){
+    Serial.println(config.lastError);
+  }
+  if(!config.readMqtt()){
     Serial.println(config.lastError);
   }
   if(!config.readTank()){
@@ -158,10 +162,10 @@ void setup() {
   delay(5000);
   if(modem.getSimStatus() != 1){
     Serial.println("SIM not ready, checking for PIN...");
-    if (modem.getSimStatus() == 2){
+    if(modem.getSimStatus() == 2){
       Serial.println("SIM PIN required.");
       // Send the PIN to the modem
-      modem.simUnlock(config);
+      modem.simUnlock();
       delay(1000);
       if(modem.getSimStatus() != 1){
         Serial.println("Failed to unlock SIM.");
@@ -182,15 +186,16 @@ void setup() {
   if(!ModbusRTUClient.begin(RTU_BAUD))
     Serial.println("Failed to start Modbus RTU Client!");
   probeData.reserve(config.probeId.size());
+  // Lỗi: biến `broker` bị lỗi sau khi khởi tạo Modbus client
   /************************************* Initialize MQTT client *************************************/
-  remote.setServer(config);
+  remote.setServer();
   remote.setBufferSize(1024);
   remote.setCallback(callBack);
   /**************************************************************************************************/
   if(!modem.isGprsConnected()){
     Serial.print("Connecting to APN: ");
-    Serial.println(config.apn());
-    if(!modem.gprsConnect(config)){
+    Serial.println(modem.gprs.apn);
+    if(!modem.gprsConnect()){
       Serial.println("GPRS failed");
     } else {
       Serial.println("GPRS connected");
@@ -198,20 +203,20 @@ void setup() {
   }
   delay(5000);
   /**************************************************************************************************/
-  Serial.println("Connecting to host");
+  /*Serial.println("Connecting to host");
   remote.apiConnect("YOUR_HOST_URL", 6868);
   Serial.println("Getting API token");
   remote.retrieveToken("YOUR_SERVER_USER_NAME", "YOUR_SERVER_PASSWORD");
-  //token = remote.token;
+  token = remote.token;
 
-  //deleteFlash<String>(0);
-  //deleteFlash<size_t>(20);
+  deleteFlash<String>(0);
+  deleteFlash<size_t>(20);
   processCsv(SD, "/error.csv", 0);
 
-  //deleteFlash<String>(20 + sizeof(size_t));
-  //deleteFlash<size_t>(20 + sizeof(size_t) + 20);
+  deleteFlash<String>(20 + sizeof(size_t));
+  deleteFlash<size_t>(20 + sizeof(size_t) + 20);
   processCsv(SD, "/probe2.csv", 1);
-
+  */
   // Create FreeRTOS tasks
   Serial.println("Creating tasks");
   xTaskCreatePinnedToCore(readGPS, "Read GPS", 3072, NULL, 1, &gpsTaskHandle, pro_cpu);
@@ -219,7 +224,7 @@ void setup() {
   xTaskCreatePinnedToCore(checkRTC, "Check RTC", 2048, NULL, 2, &rtcTaskHandle, pro_cpu);
   xTaskCreatePinnedToCore(localLog, "Log to SD", 3072, NULL, 1, &logTaskHandle, app_cpu);
   xTaskCreatePinnedToCore(remotePush, "Push to MQTT", 5012, NULL, 2, &pushTaskHandle, app_cpu);
-  xTaskCreatePinnedToCore(remotePush, "Push to API", 5012, NULL, 2, &pushTaskHandle, app_cpu);
+  //xTaskCreatePinnedToCore(apiLog, "Push to API", 5012, NULL, 2, &apiTaskHandle, app_cpu);
   // Initialize the Task Watchdog Timer
   esp_task_wdt_init(TASK_WDT_TIMEOUT, true);
   vTaskDelete(NULL);
@@ -228,8 +233,8 @@ void setup() {
 void loop(){}
 /***************************************** GPS Task *************************************************/
 void readGPS(void *pvParameters){
-  Serial.println("Reading GPS...");
   while(1){
+    Serial.println("Reading GPS...");
     int status = gps.update();
     if(status != 1){
       if(status == 0){
@@ -241,6 +246,9 @@ void readGPS(void *pvParameters){
         lcd.print("Invalid GPS data");
         errLog("Invalid GPS data", Rtc);
       }
+    } else {
+      lcd.clearRow(0);
+      lcd.print("GPS updated");
     }
     xTaskNotifyGive(pushTaskHandle);
     xTaskNotifyGive(logTaskHandle);
@@ -249,7 +257,7 @@ void readGPS(void *pvParameters){
   }
 }
 /*************************************** Modbus Task ************************************************/
-void readModbus(void *pvParameters) {
+void readModbus(void *pvParameters){
   while(1){
     Serial.println("Reading Modbus...");
     char errBuffer[512];
@@ -277,7 +285,7 @@ void readModbus(void *pvParameters) {
       }
       Serial.print("\n");
       if (errors) {
-        errBuffer[strlen(errBuffer) - 1] = '\0';
+        errBuffer[strlen(errBuffer) - 2] = '\0';
         errLog(errBuffer, Rtc);
         memset(errBuffer, 0, sizeof(errBuffer));
       }
@@ -291,31 +299,25 @@ void readModbus(void *pvParameters) {
 /****************************************************************************************************/
 void remotePush(void *pvParameters){
   while(1){
-    Serial.println("Pushing to MQTT...");
     if(!modem.isGprsConnected()){
       Serial.print("Connecting to APN: ");
-      Serial.println(config.apn());
-      if (!modem.gprsConnect(config)){
+      Serial.println(modem.gprs.apn);
+      if (!modem.gprsConnect()){
         lcd.clearRow(1);
         lcd.print("GPRS failed");
         errLog("GPRS connection failed", Rtc);
-      } else {
-        lcd.clearRow(1);
-        lcd.print("GPRS connected");
       }
     } else if(!remote.connected()){
-      if (remote.connect(macAdr, config)){
-        lcd.clearRow(1);
-        lcd.print("GPRS connected");
-        lcd.clearRow(2);
-        lcd.print("MQTT connected");
-        // Subscribe
-        remote.subscribe(config);
-      } else {
+      if (!remote.connect(macAdr)){
         lcd.clearRow(2);
         lcd.print("MQTT failed");
+        remote.subscribe();
       }
     } else {
+      lcd.clearRow(1);
+      lcd.print("MQTT connected");
+
+      Serial.println("Sending data...");
       StaticJsonDocument<1024> data;
       data["Device"] = macAdr;
       data["Date/Time"] = dateTime;
@@ -340,9 +342,9 @@ void remotePush(void *pvParameters){
       char buffer[1024];
       size_t n = serializeJson(data, buffer);
       remote.loop();
-      remote.publish(config, buffer, n);
+      remote.publish(buffer, n);
     }
-    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    //ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
     vTaskDelay(pushDelay);
     //vTaskDelayUntil(&remoteLastWake, interval);
   }
@@ -389,18 +391,19 @@ void checkRTC(void *pvParameters){
   }
 }
 /********************* Read and push data from CSV file number 'fileNo' to API ***********************/
-void apiLog(void* pvParameters){
+/*void apiLog(void* pvParameters){
   while(1){
     Serial.println("Pushing to API...");
     processCsv(SD, "/error.csv", 0);
-    processCsv(SD, "/probe1.csv", 1);
+    processCsv(SD, "/probe2.csv", 1);
     vTaskDelay(apiDelay);
   }
-}
+}*/
 /*************************************** Support functions *******************************************/
 // Function to skip rows until the last pushed timestamp is found
 bool findTimestamp(File &data, String &timeStamp, size_t &filePtr){
   if(data.seek(filePtr, SeekSet)){
+    // Lỗi: `remote.token` bị đổi giá trị trong while(data.available()) vòng lặp dòng 407 và 449
     while(data.available()){
       String line = data.readStringUntil('\n');
       line.trim();
@@ -449,8 +452,8 @@ bool sendRows(File &data, String &timeStamp, int fileNo){
     rows[rowCount++] = line;
     // Process a chunk when full
     if(rowCount == chunkSize){
-      //remote.token = token.c_str();
-      //Serial.println(remote.token);
+      remote.token = token.c_str();
+      Serial.println(remote.token);
       if(!processAndSend(false)){
         success = false;
         rowCount = 0;
