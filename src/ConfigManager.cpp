@@ -1,7 +1,7 @@
 #include <SD.h>
 #include <ArduinoJson.h>
 #include "ConfigManager.h"
-
+/*
 const char* ConfigManager::apn() const{
   return creds.apn;
 }
@@ -37,8 +37,8 @@ const char* ConfigManager::brokerPass() const{
 uint16_t ConfigManager::port() const{
   return creds.port;
 }
-
-bool ConfigManager::readNetwork(){
+*/
+bool ConfigManager::readGprs(){
   File file = SD.open("/config.json");
   if (!file) {
     lastError = "Failed to open network config file";
@@ -54,16 +54,38 @@ bool ConfigManager::readNetwork(){
   }
   file.close();
 
-  // Extract Network Configuration as String
-  this->creds.apn = config["NetworkConfiguration"]["Apn"].as<String>().c_str();
-  this->creds.simPin = config["NetworkConfiguration"]["SimPin"].as<String>().c_str();
-  this->creds.gprsUser = config["NetworkConfiguration"]["GprsUser"].as<String>().c_str();
-  this->creds.gprsPass = config["NetworkConfiguration"]["GprsPass"].as<String>().c_str();
-  this->creds.topic = config["NetworkConfiguration"]["Topic"].as<String>().c_str();
-  this->creds.broker = config["NetworkConfiguration"]["Broker"].as<String>().c_str();
-  this->creds.brokerUser = config["NetworkConfiguration"]["BrokerUser"].as<String>().c_str();
-  this->creds.brokerPass = config["NetworkConfiguration"]["BrokerPass"].as<String>().c_str();
-  this->creds.port = config["NetworkConfiguration"]["Port"].as<uint16_t>();
+  GPRS gprs;
+  gprs.apn = config["GprsConfiguration"]["Apn"].as<const char*>();
+  gprs.simPin = config["GprsConfiguration"]["SimPin"].as<const char*>();
+  gprs.user = config["GprsConfiguration"]["GprsUser"].as<const char*>();
+  gprs.pass = config["GprsConfiguration"]["GprsPass"].as<const char*>();
+
+  modem.setCreds(gprs);
+  return true;
+}
+
+bool ConfigManager::readMqtt(){
+  File file = SD.open("/config.json");
+  if (!file) {
+    lastError = "Failed to open network config file";
+    return false;
+  }
+  StaticJsonDocument<128> config;
+  DeserializationError error = deserializeJson(config, file);
+  if (error) {
+    lastError = ("Failed to get network config: " + String(error.f_str())).c_str();
+    return false;
+  }
+  file.close();
+
+  MQTT mqtt;
+  mqtt.topic = config["MqttConfiguration"]["Topic"].as<const char*>();
+  mqtt.broker = config["MqttConfiguration"]["Broker"].as<const char*>();
+  mqtt.user = config["MqttConfiguration"]["BrokerUser"].as<const char*>();
+  mqtt.pass = config["MqttConfiguration"]["BrokerPass"].as<const char*>();
+  mqtt.port = config["MqttConfiguration"]["Port"].as<uint16_t>();
+
+  remote.setCreds(mqtt);
   return true;
 }
 

@@ -18,15 +18,25 @@ struct Location{
   double longitude;
 };
 
-struct Network{
+struct GPRS{
   const char* simPin;
   const char* apn;
-  const char* gprsUser;
-  const char* gprsPass;
-  const char* topic;
+  const char* user;
+  const char* pass;
+};
+
+struct MQTT{
   const char* broker;
-  const char* brokerUser;
-  const char* brokerPass;
+  const char* topic;
+  const char* user;
+  const char* pass;
+  uint16_t port;
+};
+
+struct API{
+  const char* host;
+  const char* user;
+  const char* pass;
   uint16_t port;
 };
 

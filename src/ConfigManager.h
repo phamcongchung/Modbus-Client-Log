@@ -2,16 +2,21 @@
 #define CONFIGMANAGER_H
 
 #include <vector>
+#include "RemoteLogger.h"
+#include "Modem.h"
 #include "structs.h"
 
 class ConfigManager{
 public:
+  ConfigManager(RemoteLogger& extRemote, Modem& extModem) : remote(extRemote), modem(extModem) {}
+
   const char* lastError;
   std::vector<int> probeId;
   std::vector<uint16_t> modbusReg;
   
   bool readTank();
-  bool readNetwork();
+  bool readGprs();
+  bool readMqtt();
 
   uint16_t port() const;
   const char* apn() const;
@@ -24,7 +29,8 @@ public:
   const char* brokerPass() const;
 
 private:
-  Network creds;
+  Modem& modem;
+  RemoteLogger& remote;
   friend class Modem;
   friend class RemoteLogger;
 };

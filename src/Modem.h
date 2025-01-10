@@ -3,8 +3,8 @@
 
 #include <Arduino.h>
 #include <TinyGsmClientSIM7600.h>
-#include "ConfigManager.h"
 #include "Display.h"
+#include "structs.h"
 
 class Modem : public TinyGsmSim7600{
 
@@ -13,9 +13,11 @@ public:
     : TinyGsmSim7600(extSerial), serial(&extSerial){
     serial->begin(baudRate, SERIAL_8N1, rx, tx);
   }
+  Modem& setCreds(GPRS& gprs);
+  GPRS gprs;
 
-  void simUnlock(const ConfigManager& cm);
-  bool gprsConnect(const ConfigManager& cm);
+  void simUnlock();
+  bool gprsConnect();
   String sendATCmd(const String& cmd, unsigned long timeout);
 
 private:

@@ -1,14 +1,16 @@
 #include "Modem.h"
 
-void Modem::simUnlock(const ConfigManager& cm){
-  this->sendAT("+CPIN=" + String(cm.creds.simPin));
+Modem& Modem::setCreds(GPRS& gprs){
+  this->gprs = gprs;
+  return *this;
 }
 
-bool Modem::gprsConnect(const ConfigManager& cm) {
-  const char* cred1 = cm.creds.apn;
-  const char* cred2 = cm.creds.gprsUser;
-  const char* cred3 = cm.creds.gprsPass;
-  return TinyGsmSim7600::gprsConnect(cred1, cred2, cred3);
+void Modem::simUnlock(){
+  this->sendAT("+CPIN=" + String(this->gprs.simPin));
+}
+
+bool Modem::gprsConnect(){
+  return TinyGsmSim7600::gprsConnect(this->gprs.apn, this->gprs.user, this->gprs.pass);
 }
 
 String Modem::sendATCmd(const String& cmd, unsigned long timeout){
