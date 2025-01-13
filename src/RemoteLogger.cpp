@@ -3,25 +3,27 @@
 
 RemoteLogger& RemoteLogger::setCreds(MQTT& mqtt){
   this->mqtt = mqtt;
-  Serial.println(this->mqtt.broker);
-  Serial.println(this->mqtt.port);
+  return *this;
+}
+
+RemoteLogger& RemoteLogger::setCreds(API& api){
+  this->api = api;
   return *this;
 }
 
 PubSubClient& RemoteLogger::setServer(){
-  Serial.print("Set MQTT server: ");
-  Serial.println(this->mqtt.broker);
   return PubSubClient::setServer(this->mqtt.broker, this->mqtt.port);
 }
 
-boolean RemoteLogger::connect(const char* id){
-  Serial.print("Connect MQTT server, user: ");
-  Serial.print(this->mqtt.user);
+boolean RemoteLogger::mqttConnect(const char* id){
   return PubSubClient::connect(id, this->mqtt.user, this->mqtt.pass);
 }
 
+boolean RemoteLogger::mqttConnected(){
+  return PubSubClient::connected();
+}
+
 boolean RemoteLogger::subscribe(){
-  Serial.print("Subcribe MQTT topic: ");
   return PubSubClient::subscribe(this->mqtt.topic);
 }
 
@@ -29,9 +31,8 @@ boolean RemoteLogger::publish(const char* payload, boolean retained){
   return PubSubClient::publish(this->mqtt.topic, payload, retained);
 }
 
-bool RemoteLogger::apiConnect(const char* host, uint16_t port){
-  this->api.host = host; this->api.port = port;
-  if(client->connect(this->api.host, this->api.port, 10) != 1){
+bool RemoteLogger::apiConnect(){
+  if(apiClient->connect(this->api.host, this->api.port, 10) != 1){
     return false;
   } else {
     return true;
@@ -39,7 +40,7 @@ bool RemoteLogger::apiConnect(const char* host, uint16_t port){
 }
 
 bool RemoteLogger::apiConnected(){
-  return client->connected();
+  return apiClient->connected();
 }
 
 bool RemoteLogger::post(const char* request, const char* msg){
@@ -53,13 +54,13 @@ bool RemoteLogger::post(const char* request, const char* msg){
           "Connection: keep-alive\r\n"
           "Content-Length: %d\r\n\r\n",
           request, this->api.host, this->api.port, strlen(msg));
-  if(!client){
+  if(!apiClient){
     Serial.println("Client not initialized!");
     return false;
   }
-  client->print(header);
+  apiClient->print(header);
   Serial.print(header);
-  client->print(msg);
+  apiClient->print(msg);
   return true;
 }
 
@@ -74,19 +75,18 @@ bool RemoteLogger::securePost(const char* request, const char* msg){
           "Connection: keep-alive\r\n"
           "Content-Length: %d\r\n\r\n",
           request, this->api.host, this->api.port, this->token, strlen(msg));
-  if(!client){
+  if(!apiClient){
     Serial.println("Client not initialized!");
     return false;
   }
-  client->print(header);
+  apiClient->print(header);
   Serial.print(header);
-  client->print(msg);
+  apiClient->print(msg);
   return true;
 }
 
-void RemoteLogger::retrieveToken(const char* user, const char* pass){
-  this->api.user = user; this->api.pass = pass;
-  if(!client->connected()){
+void RemoteLogger::retrieveToken(){
+  if(!apiClient->connected()){
     Serial.println("Failed to connect to server.");
     return;
   }
@@ -101,8 +101,8 @@ void RemoteLogger::retrieveToken(const char* user, const char* pass){
   unsigned long startTime = millis();
   String response;
   while((millis() - startTime) < API_TIMEOUT){
-    if(client->available()){
-      response = client->readString();
+    if(apiClient->available()){
+      response = apiClient->readString();
       Serial.println(response);
       break;
     }
@@ -149,8 +149,8 @@ bool RemoteLogger::errorToApi(String& jsonPayload){
   unsigned long startTime = millis();
   String response;
   while((millis() - startTime) < API_TIMEOUT){
-    if(client->available()){
-      response = client->readString();
+    if(apiClient->available()){
+      response = apiClient->readString();
       Serial.println(response);
       break;
     }
@@ -180,8 +180,8 @@ bool RemoteLogger::dataToApi(String& jsonPayload){
   unsigned long startTime = millis();
   String response;
   while((millis() - startTime) < API_TIMEOUT){
-    if(client->available()){
-      response = client->readString();
+    if(apiClient->available()){
+      response = apiClient->readString();
       Serial.println(response);
       break;
     }
