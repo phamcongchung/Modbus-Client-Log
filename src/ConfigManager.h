@@ -17,17 +17,7 @@ public:
   bool readTank();
   bool readGprs();
   bool readMqtt();
-
-  uint16_t port() const;
-  const char* apn() const;
-  const char* topic() const;
-  const char* broker() const;
-  const char* simPin() const;
-  const char* gprsUser() const;
-  const char* gprsPass() const;
-  const char* brokerUser() const;
-  const char* brokerPass() const;
-
+  bool readApi();
 private:
   Modem& modem;
   RemoteLogger& remote;

@@ -1,47 +1,11 @@
 #include <SD.h>
 #include <ArduinoJson.h>
 #include "ConfigManager.h"
-/*
-const char* ConfigManager::apn() const{
-  return creds.apn;
-}
 
-const char* ConfigManager::simPin() const{
-  return creds.simPin;
-}
-
-const char* ConfigManager::gprsUser() const{
-  return creds.gprsUser;
-}
-
-const char* ConfigManager::gprsPass() const{
-  return creds.gprsPass;
-}
-
-const char* ConfigManager::topic() const{
-  return creds.topic;
-}
-
-const char* ConfigManager::broker() const{
-  return creds.broker;
-}
-
-const char* ConfigManager::brokerUser() const{
-  return creds.brokerUser;
-}
-
-const char* ConfigManager::brokerPass() const{
-  return creds.brokerPass;
-}
-
-uint16_t ConfigManager::port() const{
-  return creds.port;
-}
-*/
 bool ConfigManager::readGprs(){
   File file = SD.open("/config.json");
   if (!file) {
-    lastError = "Failed to open network config file";
+    lastError = "Failed to open config file";
     return false;
   }
   // Allocate a JSON document
@@ -49,7 +13,7 @@ bool ConfigManager::readGprs(){
   // Parse the JSON from the file
   DeserializationError error = deserializeJson(config, file);
   if (error) {
-    lastError = ("Failed to get network config: " + String(error.f_str())).c_str();
+    lastError = ("Failed to get GPRS config: " + String(error.f_str())).c_str();
     return false;
   }
   file.close();
@@ -57,8 +21,8 @@ bool ConfigManager::readGprs(){
   GPRS gprs;
   gprs.apn = config["GprsConfiguration"]["Apn"].as<const char*>();
   gprs.simPin = config["GprsConfiguration"]["SimPin"].as<const char*>();
-  gprs.user = config["GprsConfiguration"]["GprsUser"].as<const char*>();
-  gprs.pass = config["GprsConfiguration"]["GprsPass"].as<const char*>();
+  gprs.user = config["GprsConfiguration"]["User"].as<const char*>();
+  gprs.pass = config["GprsConfiguration"]["Password"].as<const char*>();
 
   modem.setCreds(gprs);
   return true;
@@ -67,13 +31,13 @@ bool ConfigManager::readGprs(){
 bool ConfigManager::readMqtt(){
   File file = SD.open("/config.json");
   if (!file) {
-    lastError = "Failed to open network config file";
+    lastError = "Failed to open config file";
     return false;
   }
   StaticJsonDocument<128> config;
   DeserializationError error = deserializeJson(config, file);
   if (error) {
-    lastError = ("Failed to get network config: " + String(error.f_str())).c_str();
+    lastError = ("Failed to get MQTT config: " + String(error.f_str())).c_str();
     return false;
   }
   file.close();
@@ -81,18 +45,42 @@ bool ConfigManager::readMqtt(){
   MQTT mqtt;
   mqtt.topic = config["MqttConfiguration"]["Topic"].as<const char*>();
   mqtt.broker = config["MqttConfiguration"]["Broker"].as<const char*>();
-  mqtt.user = config["MqttConfiguration"]["BrokerUser"].as<const char*>();
-  mqtt.pass = config["MqttConfiguration"]["BrokerPass"].as<const char*>();
+  mqtt.user = config["MqttConfiguration"]["User"].as<const char*>();
+  mqtt.pass = config["MqttConfiguration"]["Password"].as<const char*>();
   mqtt.port = config["MqttConfiguration"]["Port"].as<uint16_t>();
 
   remote.setCreds(mqtt);
   return true;
 }
 
+bool ConfigManager::readApi(){
+  File file = SD.open("/config.json");
+  if (!file) {
+    lastError = "Failed to open config file";
+    return false;
+  }
+  StaticJsonDocument<128> config;
+  DeserializationError error = deserializeJson(config, file);
+  if (error) {
+    lastError = ("Failed to get API config: " + String(error.f_str())).c_str();
+    return false;
+  }
+  file.close();
+
+  API api;
+  api.host = config["ApiConfiguration"]["Host"].as<const char*>();
+  api.user = config["ApiConfiguration"]["Username"].as<const char*>();
+  api.pass = config["ApiConfiguration"]["Password"].as<const char*>();
+  api.port = config["ApiConfiguration"]["Port"].as<uint16_t>();
+
+  remote.setCreds(api);
+  return true;
+}
+
 bool ConfigManager::readTank(){
   File file = SD.open("/config.json");
   if (!file) {
-    lastError = "Failed to open tank config file";
+    lastError = "Failed to open config file";
     return false;
   }
   // Allocate a JSON document
