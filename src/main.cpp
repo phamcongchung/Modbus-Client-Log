@@ -21,10 +21,11 @@
 
 HardwareSerial SerialAT(1);
 Modem modem(SerialAT, SIM_RXD, SIM_TXD, SIM_BAUD);
-TinyGsmClient client(modem);
-RemoteLogger remote(client);
-GPS gps(modem);
+TinyGsmClient mqttClient(modem);
+TinyGsmClient apiClient(modem);
+RemoteLogger remote(mqttClient, apiClient);
 ConfigManager config(remote, modem);
+GPS gps(modem);
 RTC Rtc(Wire);
 Display lcd(0x27, 20, 4);
 /*********************************** Variable declarations ****************************************/
@@ -76,7 +77,7 @@ void readModbus(void *pvParameters);
 void checkRTC(void *pvParameters);
 void remotePush(void *pvParameters);
 void localLog(void *pvParameters);
-//void apiLog(void* pvParameters);
+void apiLog(void* pvParameters);
 /**************************************************************************************************/
 void setup() {
   Serial.begin(115200);
@@ -149,6 +150,9 @@ void setup() {
   if(!config.readMqtt()){
     Serial.println(config.lastError);
   }
+  if(!config.readApi()){
+    Serial.println(config.lastError);
+  }
   if(!config.readTank()){
     Serial.println(config.lastError);
   }
@@ -182,16 +186,11 @@ void setup() {
     lcd.print("Failed to initialize GPS");
     errLog("Failed to initialize GPS", Rtc);
   }
-  /********************************** Initialize Modbus RTU client **********************************/
-  if(!ModbusRTUClient.begin(RTU_BAUD))
-    Serial.println("Failed to start Modbus RTU Client!");
-  probeData.reserve(config.probeId.size());
-  // Lỗi: biến `broker` bị lỗi sau khi khởi tạo Modbus client
   /************************************* Initialize MQTT client *************************************/
   remote.setServer();
   remote.setBufferSize(1024);
   remote.setCallback(callBack);
-  /**************************************************************************************************/
+  /************************************* Connect modem to GPRS **************************************/
   if(!modem.isGprsConnected()){
     Serial.print("Connecting to APN: ");
     Serial.println(modem.gprs.apn);
@@ -202,21 +201,25 @@ void setup() {
     }
   }
   delay(5000);
-  /**************************************************************************************************/
-  /*Serial.println("Connecting to host");
-  remote.apiConnect("YOUR_HOST_URL", 6868);
+  /***************************** Connect to API & check for unlogged data ***************************/
+  Serial.println("Connecting to host");
+  remote.apiConnect();
   Serial.println("Getting API token");
-  remote.retrieveToken("YOUR_SERVER_USER_NAME", "YOUR_SERVER_PASSWORD");
+  remote.retrieveToken();
   token = remote.token;
 
-  deleteFlash<String>(0);
-  deleteFlash<size_t>(20);
+  //deleteFlash<String>(0);
+  //deleteFlash<size_t>(20);
   processCsv(SD, "/error.csv", 0);
 
-  deleteFlash<String>(20 + sizeof(size_t));
-  deleteFlash<size_t>(20 + sizeof(size_t) + 20);
+  //deleteFlash<String>(20 + sizeof(size_t));
+  //deleteFlash<size_t>(20 + sizeof(size_t) + 20);
   processCsv(SD, "/probe2.csv", 1);
-  */
+  /********************************** Initialize Modbus RTU client **********************************/
+  if(!ModbusRTUClient.begin(RTU_BAUD))
+    Serial.println("Failed to start Modbus RTU Client!");
+  probeData.reserve(config.probeId.size());
+
   // Create FreeRTOS tasks
   Serial.println("Creating tasks");
   xTaskCreatePinnedToCore(readGPS, "Read GPS", 3072, NULL, 1, &gpsTaskHandle, pro_cpu);
@@ -224,7 +227,7 @@ void setup() {
   xTaskCreatePinnedToCore(checkRTC, "Check RTC", 2048, NULL, 2, &rtcTaskHandle, pro_cpu);
   xTaskCreatePinnedToCore(localLog, "Log to SD", 3072, NULL, 1, &logTaskHandle, app_cpu);
   xTaskCreatePinnedToCore(remotePush, "Push to MQTT", 5012, NULL, 2, &pushTaskHandle, app_cpu);
-  //xTaskCreatePinnedToCore(apiLog, "Push to API", 5012, NULL, 2, &apiTaskHandle, app_cpu);
+  xTaskCreatePinnedToCore(apiLog, "Push to API", 5012, NULL, 2, &apiTaskHandle, app_cpu);
   // Initialize the Task Watchdog Timer
   esp_task_wdt_init(TASK_WDT_TIMEOUT, true);
   vTaskDelete(NULL);
@@ -391,19 +394,19 @@ void checkRTC(void *pvParameters){
   }
 }
 /********************* Read and push data from CSV file number 'fileNo' to API ***********************/
-/*void apiLog(void* pvParameters){
+void apiLog(void* pvParameters){
   while(1){
     Serial.println("Pushing to API...");
     processCsv(SD, "/error.csv", 0);
     processCsv(SD, "/probe2.csv", 1);
     vTaskDelay(apiDelay);
   }
-}*/
+}
 /*************************************** Support functions *******************************************/
 // Function to skip rows until the last pushed timestamp is found
 bool findTimestamp(File &data, String &timeStamp, size_t &filePtr){
   if(data.seek(filePtr, SeekSet)){
-    // Lỗi: `remote.token` bị đổi giá trị trong while(data.available()) vòng lặp dòng 407 và 449
+    // Lỗi: `remote.token` bị đổi giá trị trong while(data.available()) vòng lặp dòng 410 và 452
     while(data.available()){
       String line = data.readStringUntil('\n');
       line.trim();
