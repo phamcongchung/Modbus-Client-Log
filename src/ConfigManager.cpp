@@ -9,7 +9,7 @@ bool ConfigManager::readGprs(){
     return false;
   }
   // Allocate a JSON document
-  StaticJsonDocument<128> config;
+  JsonDocument config;
   // Parse the JSON from the file
   DeserializationError error = deserializeJson(config, file);
   if (error) {
@@ -34,7 +34,7 @@ bool ConfigManager::readMqtt(){
     lastError = "Failed to open config file";
     return false;
   }
-  StaticJsonDocument<128> config;
+  JsonDocument config;
   DeserializationError error = deserializeJson(config, file);
   if (error) {
     lastError = ("Failed to get MQTT config: " + String(error.f_str())).c_str();
@@ -59,7 +59,7 @@ bool ConfigManager::readApi(){
     lastError = "Failed to open config file";
     return false;
   }
-  StaticJsonDocument<128> config;
+  JsonDocument config;
   DeserializationError error = deserializeJson(config, file);
   if (error) {
     lastError = ("Failed to get API config: " + String(error.f_str())).c_str();
@@ -84,7 +84,7 @@ bool ConfigManager::readTank(){
     return false;
   }
   // Allocate a JSON document
-  StaticJsonDocument<512> config;
+  JsonDocument config;
   // Parse the JSON from the file
   DeserializationError error = deserializeJson(config, file);
   if (error) {

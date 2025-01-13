@@ -321,7 +321,7 @@ void remotePush(void *pvParameters){
       lcd.print("MQTT connected");
 
       Serial.println("Sending data...");
-      StaticJsonDocument<1024> data;
+      JsonDocument data;
       data["Device"] = macAdr;
       data["Date/Time"] = dateTime;
 

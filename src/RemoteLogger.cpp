@@ -121,7 +121,7 @@ void RemoteLogger::retrieveToken(){
     response = "";
   }
   // Parse the token from the response (assumes JSON response format)
-  StaticJsonDocument<1024> jsonDoc;
+  JsonDocument jsonDoc;
   DeserializationError error = deserializeJson(jsonDoc, response);
   if (error){
     Serial.print("Failed to get token: ");
