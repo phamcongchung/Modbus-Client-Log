@@ -19,10 +19,10 @@ bool ConfigManager::readGprs(){
   file.close();
 
   GPRS gprs;
-  gprs.apn = config["GprsConfiguration"]["Apn"].as<const char*>();
-  gprs.simPin = config["GprsConfiguration"]["SimPin"].as<const char*>();
-  gprs.user = config["GprsConfiguration"]["User"].as<const char*>();
-  gprs.pass = config["GprsConfiguration"]["Password"].as<const char*>();
+  gprs.apn = config["GprsConfiguration"]["Apn"].as<String>();
+  gprs.simPin = config["GprsConfiguration"]["SimPin"].as<String>();
+  gprs.user = config["GprsConfiguration"]["User"].as<String>();
+  gprs.pass = config["GprsConfiguration"]["Password"].as<String>();
 
   modem.setCreds(gprs);
   return true;
@@ -43,10 +43,10 @@ bool ConfigManager::readMqtt(){
   file.close();
 
   MQTT mqtt;
-  mqtt.topic = config["MqttConfiguration"]["Topic"].as<const char*>();
-  mqtt.broker = config["MqttConfiguration"]["Broker"].as<const char*>();
-  mqtt.user = config["MqttConfiguration"]["User"].as<const char*>();
-  mqtt.pass = config["MqttConfiguration"]["Password"].as<const char*>();
+  mqtt.topic = config["MqttConfiguration"]["Topic"].as<String>();
+  mqtt.broker = config["MqttConfiguration"]["Broker"].as<String>();
+  mqtt.user = config["MqttConfiguration"]["User"].as<String>();
+  mqtt.pass = config["MqttConfiguration"]["Password"].as<String>();
   mqtt.port = config["MqttConfiguration"]["Port"].as<uint16_t>();
 
   remote.setCreds(mqtt);
@@ -68,9 +68,9 @@ bool ConfigManager::readApi(){
   file.close();
 
   API api;
-  api.host = config["ApiConfiguration"]["Host"].as<const char*>();
-  api.user = config["ApiConfiguration"]["Username"].as<const char*>();
-  api.pass = config["ApiConfiguration"]["Password"].as<const char*>();
+  api.host = config["ApiConfiguration"]["Host"].as<String>();
+  api.user = config["ApiConfiguration"]["Username"].as<String>();
+  api.pass = config["ApiConfiguration"]["Password"].as<String>();
   api.port = config["ApiConfiguration"]["Port"].as<uint16_t>();
 
   remote.setCreds(api);
@@ -102,7 +102,6 @@ bool ConfigManager::readTank(){
     for(JsonVariant regValue : modbusRegs){
       modbusReg.push_back(regValue.as<uint16_t>());
     }
-    Serial.println("");
     probeId.push_back(tank["Id"].as<int>());
     String device = tank["Device"];
     String serialNo = tank["SerialNo"];

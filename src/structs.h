@@ -19,24 +19,24 @@ struct Location{
 };
 
 struct GPRS{
-  const char* simPin;
-  const char* apn;
-  const char* user;
-  const char* pass;
+  String simPin;
+  String apn;
+  String user;
+  String pass;
 };
 
 struct MQTT{
-  const char* broker;
-  const char* topic;
-  const char* user;
-  const char* pass;
+  String broker;
+  String topic;
+  String user;
+  String pass;
   uint16_t port;
 };
 
 struct API{
-  const char* host;
-  const char* user;
-  const char* pass;
+  String host;
+  String user;
+  String pass;
   uint16_t port;
 };
 

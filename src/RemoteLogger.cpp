@@ -1,38 +1,38 @@
 #include "RemoteLogger.h"
 #include <ArduinoJson.h>
 
-RemoteLogger& RemoteLogger::setCreds(MQTT& mqtt){
+RemoteLogger& RemoteLogger::setCreds(MQTT mqtt){
   this->mqtt = mqtt;
   return *this;
 }
 
-RemoteLogger& RemoteLogger::setCreds(API& api){
+RemoteLogger& RemoteLogger::setCreds(API api){
   this->api = api;
   return *this;
 }
 
-PubSubClient& RemoteLogger::setServer(){
-  return PubSubClient::setServer(this->mqtt.broker, this->mqtt.port);
+PubSubClient& RemoteLogger::setMqttServer(){
+  return PubSubClient::setServer(this->mqtt.broker.c_str(), this->mqtt.port);
 }
 
 boolean RemoteLogger::mqttConnect(const char* id){
-  return PubSubClient::connect(id, this->mqtt.user, this->mqtt.pass);
+  return PubSubClient::connect(id, this->mqtt.user.c_str(), this->mqtt.pass.c_str());
 }
 
 boolean RemoteLogger::mqttConnected(){
   return PubSubClient::connected();
 }
 
-boolean RemoteLogger::subscribe(){
-  return PubSubClient::subscribe(this->mqtt.topic);
+boolean RemoteLogger::mqttSubscribe(){
+  return PubSubClient::subscribe(this->mqtt.topic.c_str());
 }
 
-boolean RemoteLogger::publish(const char* payload, boolean retained){
-  return PubSubClient::publish(this->mqtt.topic, payload, retained);
+boolean RemoteLogger::mqttPublish(const char* payload, boolean retained){
+  return PubSubClient::publish(this->mqtt.topic.c_str(), payload, retained);
 }
 
 bool RemoteLogger::apiConnect(){
-  if(apiClient->connect(this->api.host, this->api.port, 10) != 1){
+  if(apiClient->connect(this->api.host.c_str(), this->api.port, 10) != 1){
     return false;
   } else {
     return true;
@@ -42,9 +42,9 @@ bool RemoteLogger::apiConnect(){
 bool RemoteLogger::apiConnected(){
   return apiClient->connected();
 }
-
+// POST request without authentication
 bool RemoteLogger::post(const char* request, const char* msg){
-  char header[1250];
+  /*char header[1250];
   snprintf(header, sizeof(header),
           "POST %s HTTP/1.1\r\n"
           "Host: %s:%d\r\n"
@@ -53,19 +53,26 @@ bool RemoteLogger::post(const char* request, const char* msg){
           "Accept-Language: en-US\r\n"
           "Connection: keep-alive\r\n"
           "Content-Length: %d\r\n\r\n",
-          request, this->api.host, this->api.port, strlen(msg));
+          request, this->api.host.c_str(), this->api.port, strlen(msg));*/
   if(!apiClient){
     Serial.println("Client not initialized!");
     return false;
   }
-  apiClient->print(header);
-  Serial.print(header);
+  apiClient->print( "POST " + String(request) + " HTTP/1.1\r\n"
+                    "Host: "+ this->api.host + ":" + String(this->api.port) + "\r\n"
+                    "Content-Type: application/json\r\n"
+                    "tenant: root\r\n"
+                    "Accept-Language: en-US\r\n"
+                    "Connection: keep-alive\r\n"
+                    "Content-Length: " + String(strlen(msg)) + "\r\n\r\n");
+  //Serial.print(header);
   apiClient->print(msg);
+  //Serial.println(msg);
   return true;
 }
-
-bool RemoteLogger::securePost(const char* request, const char* msg){
-  char header[1250];
+// POST request with authentication
+bool RemoteLogger::authPost(const char* request, const char* msg){
+  /*char header[1250];
   snprintf(header, sizeof(header),
           "POST %s HTTP/1.1\r\n"
           "Host: %s:%d\r\n"
@@ -74,14 +81,21 @@ bool RemoteLogger::securePost(const char* request, const char* msg){
           "Accept-Language: en-US\r\n"
           "Connection: keep-alive\r\n"
           "Content-Length: %d\r\n\r\n",
-          request, this->api.host, this->api.port, this->token, strlen(msg));
+          request, this->api.host.c_str(), this->api.port, this->token.c_str(), strlen(msg));*/
   if(!apiClient){
     Serial.println("Client not initialized!");
     return false;
   }
-  apiClient->print(header);
-  Serial.print(header);
+  apiClient->print( "POST " + String(request) + " HTTP/1.1\r\n"
+                    "Host: "+ this->api.host + ":" + String(this->api.port) + "\r\n"
+                    "Content-Type: application/json\r\n"
+                    "Authorization: Bearer " + this->token + "\r\n"
+                    "Accept-Language: en-US\r\n"
+                    "Connection: keep-alive\r\n"
+                    "Content-Length: " + String(strlen(msg)) + "\r\n\r\n");
+  //Serial.print(header);
   apiClient->print(msg);
+  //Serial.println(msg);
   return true;
 }
 
@@ -93,8 +107,7 @@ void RemoteLogger::retrieveToken(){
   char tokenAuth[128];
   snprintf(tokenAuth, sizeof(tokenAuth),
           "{\"username\":\"%s\",\"password\":\"%s\"}",
-          this->api.user, this->api.pass);
-  Serial.println(tokenAuth);
+          this->api.user.c_str(), this->api.pass.c_str());
   this->post("/api/tokens", tokenAuth);
 
   Serial.println("Waiting for authentication response...");
@@ -129,8 +142,8 @@ void RemoteLogger::retrieveToken(){
     return;
   }
   if(jsonDoc.containsKey("token")){
-    this->token = jsonDoc["token"].as<const char*>();
-    Serial.print("Extracted Token: ");
+    this->token = jsonDoc["token"].as<String>();
+    Serial.print("Extracted token: ");
     Serial.println(this->token);
   } else {
     Serial.println("Error: 'token' field not found.");
@@ -143,7 +156,7 @@ bool RemoteLogger::errorToApi(String& jsonPayload){
     return false;
   }
   Serial.println("Sending error chunk...");
-  this->securePost("/api/v1/errorloggers/addlisterrorogger", jsonPayload.c_str());
+  authPost("/api/v1/errorloggers/addlisterrorogger", jsonPayload.c_str());
   
   Serial.println("Waiting for server response...");
   unsigned long startTime = millis();
@@ -174,7 +187,7 @@ bool RemoteLogger::dataToApi(String& jsonPayload){
     return false;
   }
   Serial.println("Sending data chunk...");
-  this->securePost("/api/v1/dataloggers/addlistdatalogger", jsonPayload.c_str());
+  authPost("/api/v1/dataloggers/addlistdatalogger", jsonPayload.c_str());
   
   Serial.println("Waiting for server response...");
   unsigned long startTime = millis();

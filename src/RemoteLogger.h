@@ -11,29 +11,28 @@
 
 class RemoteLogger : public PubSubClient{
 public:
-  RemoteLogger(TinyGsmClient& mqttClient, TinyGsmClient& apiClient)
+ RemoteLogger(TinyGsmClient& mqttClient, TinyGsmClient& apiClient)
               : PubSubClient(mqttClient), apiClient(&apiClient){}
 
-  const char* token;
-
-  RemoteLogger& setCreds(MQTT& mqtt);
-  RemoteLogger& setCreds(API& api);
-  PubSubClient& setServer();
+  RemoteLogger& setCreds(MQTT mqtt);
+  RemoteLogger& setCreds(API api);
+  PubSubClient& setMqttServer();
   boolean mqttConnect(const char* id);
   boolean mqttConnected();
-  boolean publish(const char* payload, boolean retained);
-  boolean subscribe();
+  boolean mqttPublish(const char* payload, boolean retained);
+  boolean mqttSubscribe();
   
   void retrieveToken();
   bool apiConnect();
   bool apiConnected();
   bool post(const char* request, const char* msg);
-  bool securePost(const char* request, const char* msg);
+  bool authPost(const char* request, const char* msg);
   bool dataToApi(String& jsonPayload);
   bool errorToApi(String& jsonPayload);
 private:
   TinyGsmClient* mqttClient;
   TinyGsmClient* apiClient;
+  String token;
   MQTT mqtt;
   API api;
 };

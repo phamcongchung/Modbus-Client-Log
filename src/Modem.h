@@ -14,7 +14,6 @@ public:
     serial->begin(baudRate, SERIAL_8N1, rx, tx);
   }
   Modem& setCreds(GPRS& gprs);
-  GPRS gprs;
 
   void simUnlock();
   bool gprsConnect();
@@ -22,6 +21,7 @@ public:
 
 private:
   HardwareSerial *serial;
+  GPRS gprs;
 };
 
 #endif

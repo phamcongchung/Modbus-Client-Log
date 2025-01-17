@@ -6,11 +6,12 @@ Modem& Modem::setCreds(GPRS& gprs){
 }
 
 void Modem::simUnlock(){
-  this->sendAT("+CPIN=" + String(this->gprs.simPin));
+  this->sendAT("+CPIN=" + this->gprs.simPin);
 }
 
 bool Modem::gprsConnect(){
-  return TinyGsmSim7600::gprsConnect(this->gprs.apn, this->gprs.user, this->gprs.pass);
+  return TinyGsmSim7600::gprsConnect(this->gprs.apn.c_str(),this->gprs.user.c_str(),
+                                    this->gprs.pass.c_str());
 }
 
 String Modem::sendATCmd(const String& cmd, unsigned long timeout){

@@ -3,12 +3,12 @@ using namespace std;
 
 template<typename T>
 void deleteFlash(int adr){
-  if constexpr(std::is_same<T, String>::value){
+  if constexpr(is_same<T, String>::value){
     for(int i = 0; i < 20; i++){
       EEPROM.write(adr + i, 0);
     }
     EEPROM.commit();
-  } else if constexpr(std::is_same<T, size_t>::value){
+  } else if constexpr(is_same<T, size_t>::value){
     for(int i = 0; i < sizeof(T); i++){
       EEPROM.write(adr + i, 0);
     }
@@ -22,7 +22,7 @@ T readFlash(int adr){
   if(adr < 0 || adr >= EEPROM.length()){
     return T{};
   }
-  if constexpr(std::is_same<T, String>::value){
+  if constexpr(is_same<T, String>::value){
     String str = "";
     char read;
     // Read characters until null terminator is found
@@ -32,7 +32,7 @@ T readFlash(int adr){
       str += (char)read;
     }
     return str;
-  } else if constexpr(std::is_same<T, size_t>::value){
+  } else if constexpr(is_same<T, size_t>::value){
     size_t val = 0;
     for(size_t i = 0; i < sizeof(size_t); i++){
       val |= ((size_t)EEPROM.read(adr + i)) << (8 * i);

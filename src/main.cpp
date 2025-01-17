@@ -19,27 +19,24 @@
 #define EEPROM_SIZE       56
 #define TASK_WDT_TIMEOUT  60
 
+Display lcd(0x27, 20, 4);
 HardwareSerial SerialAT(1);
 Modem modem(SerialAT, SIM_RXD, SIM_TXD, SIM_BAUD);
-TinyGsmClient mqttClient(modem);
-TinyGsmClient apiClient(modem);
-RemoteLogger remote(mqttClient, apiClient);
+TinyGsmClient apiClient(modem, 1);
+TinyGsmClient mqttClient(modem, 0);
+RemoteLogger remote(mqttClient,apiClient);
 ConfigManager config(remote, modem);
 GPS gps(modem);
 RTC Rtc(Wire);
-Display lcd(0x27, 20, 4);
 /*********************************** Variable declarations ****************************************/
 static const BaseType_t pro_cpu = 0;
 static const BaseType_t app_cpu = 1;
 
-String token;
-
 uint8_t mac[6];
 char macAdr[18];
+int logCount = 0;
 char dateTime[20];
 char logString[300];
-int rowCount = 0;
-const int chunkSize = 5;
 RtcDateTime run_time, compiled;
 std::vector<File> openFiles;
 std::vector<ProbeData> probeData;
@@ -61,16 +58,16 @@ const TickType_t interval = pdMS_TO_TICKS(5000);
 const TickType_t modbus_interval = pdMS_TO_TICKS(10000);*/
 // Task delay times
 const TickType_t gpsDelay = pdMS_TO_TICKS(5000);
-const TickType_t modbusDelay = pdMS_TO_TICKS(5000);
+const TickType_t modbusDelay = pdMS_TO_TICKS(10000);
 const TickType_t rtcDelay = pdMS_TO_TICKS(5000);
 const TickType_t logDelay = pdMS_TO_TICKS(5000);
 const TickType_t pushDelay = pdMS_TO_TICKS(5000);
 const TickType_t apiDelay = pdMS_TO_TICKS(5000);
 /*********************************** Function declarations ****************************************/
 bool isOpen(const char* filename);
-bool findTimestamp(File &data, String &timeStamp, size_t &filePtr);
 bool sendRows(File &data, String &timeStamp, int fileNo);
 bool processCsv(fs::FS &fs, const char* path, int fileNo);
+bool findTimestamp(File &data, String &timeStamp, size_t &filePtr);
 // Task prototypes
 void readGPS(void *pvParameters);
 void readModbus(void *pvParameters);
@@ -186,35 +183,49 @@ void setup() {
     lcd.print("Failed to initialize GPS");
     errLog("Failed to initialize GPS", Rtc);
   }
-  /************************************* Initialize MQTT client *************************************/
-  remote.setServer();
-  remote.setBufferSize(1024);
-  remote.setCallback(callBack);
   /************************************* Connect modem to GPRS **************************************/
   if(!modem.isGprsConnected()){
-    Serial.print("Connecting to APN: ");
-    Serial.println(modem.gprs.apn);
     if(!modem.gprsConnect()){
-      Serial.println("GPRS failed");
+      lcd.clearRow(1);
+      lcd.print("GPRS failed");
     } else {
-      Serial.println("GPRS connected");
+      lcd.clearRow(1);
+      lcd.print("GPRS connected");
     }
+  } else {
+    lcd.clearRow(1);
+    lcd.print("GPRS connected");
   }
   delay(5000);
+  /************************************* Initialize MQTT client *************************************/
+  remote.setMqttServer();
+  remote.setBufferSize(1024);
+  remote.setCallback(callBack);
+  if(!remote.mqttConnected()){
+    if(!remote.mqttConnect(macAdr)){
+      lcd.clearRow(2);
+      lcd.print("MQTT failed");
+    } else {
+      lcd.clearRow(2);
+      lcd.print("MQTT connected");
+    }
+  } else {
+    lcd.clearRow(2);
+    lcd.print("MQTT connected");
+  }
   /***************************** Connect to API & check for unlogged data ***************************/
   Serial.println("Connecting to host");
   remote.apiConnect();
   Serial.println("Getting API token");
   remote.retrieveToken();
-  token = remote.token;
 
   //deleteFlash<String>(0);
   //deleteFlash<size_t>(20);
-  processCsv(SD, "/error.csv", 0);
+  //processCsv(SD, "/error.csv", 0);
 
   //deleteFlash<String>(20 + sizeof(size_t));
   //deleteFlash<size_t>(20 + sizeof(size_t) + 20);
-  processCsv(SD, "/probe2.csv", 1);
+  //processCsv(SD, "/probe1.csv", 1);
   /********************************** Initialize Modbus RTU client **********************************/
   if(!ModbusRTUClient.begin(RTU_BAUD))
     Serial.println("Failed to start Modbus RTU Client!");
@@ -224,10 +235,10 @@ void setup() {
   Serial.println("Creating tasks");
   xTaskCreatePinnedToCore(readGPS, "Read GPS", 3072, NULL, 1, &gpsTaskHandle, pro_cpu);
   xTaskCreatePinnedToCore(readModbus, "Read Modbus", 5012, NULL, 1, &modbusTaskHandle, pro_cpu);
-  xTaskCreatePinnedToCore(checkRTC, "Check RTC", 2048, NULL, 2, &rtcTaskHandle, pro_cpu);
-  xTaskCreatePinnedToCore(localLog, "Log to SD", 3072, NULL, 1, &logTaskHandle, app_cpu);
-  xTaskCreatePinnedToCore(remotePush, "Push to MQTT", 5012, NULL, 2, &pushTaskHandle, app_cpu);
   xTaskCreatePinnedToCore(apiLog, "Push to API", 5012, NULL, 2, &apiTaskHandle, app_cpu);
+  xTaskCreatePinnedToCore(localLog, "Log to SD", 3072, NULL, 1, &logTaskHandle, app_cpu);
+  xTaskCreatePinnedToCore(remotePush, "Push to MQTT", 5012, NULL, 1, &pushTaskHandle, app_cpu);
+  xTaskCreatePinnedToCore(checkRTC, "Check RTC", 2048, NULL, 1, &rtcTaskHandle, pro_cpu);
   // Initialize the Task Watchdog Timer
   esp_task_wdt_init(TASK_WDT_TIMEOUT, true);
   vTaskDelete(NULL);
@@ -302,54 +313,85 @@ void readModbus(void *pvParameters){
 /****************************************************************************************************/
 void remotePush(void *pvParameters){
   while(1){
+    Serial.println("Pushing to MQTT...");
     if(!modem.isGprsConnected()){
-      Serial.print("Connecting to APN: ");
-      Serial.println(modem.gprs.apn);
       if (!modem.gprsConnect()){
         lcd.clearRow(1);
         lcd.print("GPRS failed");
         errLog("GPRS connection failed", Rtc);
+      } else {
+        lcd.clearRow(1);
+        lcd.print("GPRS connected");
       }
-    } else if(!remote.connected()){
-      if (!remote.connect(macAdr)){
+    } else if(!remote.mqttConnected()){
+      if(!remote.mqttConnect(macAdr)){
         lcd.clearRow(2);
         lcd.print("MQTT failed");
-        remote.subscribe();
+      } else {
+        lcd.clearRow(2);
+        lcd.print("MQTT connected");
+        remote.mqttSubscribe();
+
+        Serial.println("Sending data to MQTT...");
+        JsonDocument data;
+        data["Device"] = macAdr;
+        data["Date/Time"] = dateTime;
+
+        JsonObject gpsData = data.createNestedObject("Gps");
+        gpsData["Latitude"] = gps.location.latitude;
+        gpsData["Longitude"] = gps.location.longitude;
+        gpsData["Altitude"] = gps.location.altitude;
+        gpsData["Speed"] = gps.location.speed;
+
+        JsonArray measures = data.createNestedArray("Measure");
+        for(size_t i = 0; i < config.probeId.size(); i++){
+          JsonObject measure = measures.createNestedObject();
+          measure["Id"] = config.probeId[i];
+          measure["Volume"] = probeData[i].volume;
+          measure["Ullage"] = probeData[i].ullage;
+          measure["Temperature"] = probeData[i].temperature;
+          measure["ProductLevel"] = probeData[i].product;
+          measure["WaterLevel"] = probeData[i].water;
+        }
+        // Serialize JSON and publish
+        char buffer[1024];
+        size_t n = serializeJson(data, buffer);
+        remote.loop();
+        remote.mqttPublish(buffer, n);
       }
-    } else {
-      lcd.clearRow(1);
-      lcd.print("MQTT connected");
-
-      Serial.println("Sending data...");
-      JsonDocument data;
-      data["Device"] = macAdr;
-      data["Date/Time"] = dateTime;
-
-      JsonObject gpsData = data.createNestedObject("Gps");
-      gpsData["Latitude"] = gps.location.latitude;
-      gpsData["Longitude"] = gps.location.longitude;
-      gpsData["Altitude"] = gps.location.altitude;
-      gpsData["Speed"] = gps.location.speed;
-
-      JsonArray measures = data.createNestedArray("Measure");
-      for(size_t i = 0; i < config.probeId.size(); i++){
-        JsonObject measure = measures.createNestedObject();
-        measure["Id"] = config.probeId[i];
-        measure["Volume"] = probeData[i].volume;
-        measure["Ullage"] = probeData[i].ullage;
-        measure["Temperature"] = probeData[i].temperature;
-        measure["ProductLevel"] = probeData[i].product;
-        measure["WaterLevel"] = probeData[i].water;
-      }
-      // Serialize JSON and publish
-      char buffer[1024];
-      size_t n = serializeJson(data, buffer);
-      remote.loop();
-      remote.publish(buffer, n);
     }
-    //ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
     vTaskDelay(pushDelay);
     //vTaskDelayUntil(&remoteLastWake, interval);
+  }
+}
+/********************* Read and push data from CSV file number 'fileNo' to API ***********************/
+void apiLog(void* pvParameters){
+  while(1){
+    Serial.println("Pushing to API...");
+    if(!modem.isGprsConnected()){
+      if (!modem.gprsConnect()){
+        lcd.clearRow(1);
+        lcd.print("GPRS failed");
+        errLog("GPRS connection failed", Rtc);
+      } else {
+        lcd.clearRow(1);
+        lcd.print("GPRS connected");
+      }
+    } else if(!remote.apiConnected()){
+      if(!remote.apiConnect()){
+        lcd.clearRow(2);
+        lcd.print("API failed");
+      } else {
+        lcd.clearRow(2);
+        lcd.print("API connected");
+        if(logCount == 5){
+          if(processCsv(SD, "/error.csv", 0) && processCsv(SD, "/probe1.csv", 1))
+            logCount = 0;
+        }
+      }
+    }
+    vTaskDelay(apiDelay);
   }
 }
 /****************************************************************************************************/
@@ -363,7 +405,9 @@ void localLog(void *pvParameters){
               dateTime, gps.location.latitude, gps.location.longitude, gps.location.speed,
               gps.location.altitude, probeData[i].volume, probeData[i].ullage,
               probeData[i].temperature, probeData[i].product, probeData[i].water);
-      appendFile(SD, path, logString);
+      if(appendFile(SD, path, logString)){
+        logCount++;
+      }
     }
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
     vTaskDelay(logDelay);
@@ -373,8 +417,7 @@ void localLog(void *pvParameters){
 /****************************************************************************************************/
 void checkRTC(void *pvParameters){
   while(1){
-    Serial.println("Checking RTC...");
-    if (!Rtc.IsDateTimeValid()){
+    if(!Rtc.IsDateTimeValid()){
       if(Rtc.LastError() != 0){
         Serial.println("RTC communication error");
         Serial.println(Rtc.LastError());
@@ -382,31 +425,23 @@ void checkRTC(void *pvParameters){
         Rtc.SetDateTime(compiled);
       }
     }
-    if (!Rtc.GetIsRunning()){
+    if(!Rtc.GetIsRunning()){
       Serial.println("RTC was not actively running, starting now");
       Rtc.SetIsRunning(true);
     }
     Rtc.saveTime(dateTime);
+    lcd.clearRow(3);
+    lcd.print(dateTime);
     xTaskNotifyGive(pushTaskHandle);
     xTaskNotifyGive(logTaskHandle);
     vTaskDelay(rtcDelay);
     //vTaskDelayUntil(&rtcLastWake, interval);
   }
 }
-/********************* Read and push data from CSV file number 'fileNo' to API ***********************/
-void apiLog(void* pvParameters){
-  while(1){
-    Serial.println("Pushing to API...");
-    processCsv(SD, "/error.csv", 0);
-    processCsv(SD, "/probe2.csv", 1);
-    vTaskDelay(apiDelay);
-  }
-}
 /*************************************** Support functions *******************************************/
 // Function to skip rows until the last pushed timestamp is found
 bool findTimestamp(File &data, String &timeStamp, size_t &filePtr){
   if(data.seek(filePtr, SeekSet)){
-    // Lỗi: `remote.token` bị đổi giá trị trong while(data.available()) vòng lặp dòng 410 và 452
     while(data.available()){
       String line = data.readStringUntil('\n');
       line.trim();
@@ -428,7 +463,7 @@ bool sendRows(File &data, String &timeStamp, int fileNo){
   bool success = true;
   String jsonPayload;
   String rows[chunkSize];
-  // Helper lambda to process and send rows
+  // Lambda to process and send rows
   auto processAndSend = [&](bool isFinalChunk){
     jsonPayload = (fileNo == 0) ? errorToJson(rows, rowCount) : dataToJson(rows, rowCount);
     Serial.println(jsonPayload);
@@ -448,15 +483,23 @@ bool sendRows(File &data, String &timeStamp, int fileNo){
     Serial.println("Max retries reached. Aborting...");
     return false;
   };
+  // Lambda to check for corrupted character
+  auto corrupted = [&] (const String& line){
+    for(unsigned int i = 0; i < line.length(); i++){
+      if(line[i] < 32 || line[i] > 126)
+        return true;
+    }
+    return false;
+  };
   // Main loop to read and process rows
   while(data.available()){
     String line = data.readStringUntil('\n');
     line.trim();
+    if(line == "" || line.length() == 0 || corrupted(line))
+      continue;
     rows[rowCount++] = line;
     // Process a chunk when full
     if(rowCount == chunkSize){
-      remote.token = token.c_str();
-      Serial.println(remote.token);
       if(!processAndSend(false)){
         success = false;
         rowCount = 0;
